@@ -3,13 +3,14 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons } from '@expo/vector-icons'; // ← thêm dòng này
+import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import HomeScreen       from './src/screens/HomeScreen';
-import CaptureScreen    from './src/screens/CaptureScreen';
-import DetailScreen     from './src/screens/DetailScreen';
-import SearchScreen     from './src/screens/SearchScreen';
-import RemindersScreen  from './src/screens/RemindersScreen';
+import HomeScreen      from './src/screens/HomeScreen';
+import CaptureScreen   from './src/screens/CaptureScreen';
+import DetailScreen    from './src/screens/DetailScreen';
+import SearchScreen    from './src/screens/SearchScreen';
+import RemindersScreen from './src/screens/RemindersScreen';
 import { RootStackParamList, RootTabParamList } from './src/types';
 
 const Tab   = createBottomTabNavigator<RootTabParamList>();
@@ -24,7 +25,10 @@ function HomeStack() {
   );
 }
 
-export default function App() {
+// ← Tách ra component riêng, hook chạy SAU khi SafeAreaProvider đã mount
+function AppNavigator() {
+  const insets = useSafeAreaInsets();
+
   return (
     <>
       <StatusBar style="light" />
@@ -35,9 +39,9 @@ export default function App() {
             tabBarStyle: {
               backgroundColor: '#0F0F0F',
               borderTopColor:  '#1F2937',
-              paddingBottom: 8,
-              paddingTop: 6,
-              height: 62,
+              paddingTop:      0,
+              paddingBottom:   insets.bottom + 6,
+              height:          62 + insets.bottom,
             },
             tabBarActiveTintColor:   '#6C63FF',
             tabBarInactiveTintColor: '#6B7280',
@@ -54,7 +58,6 @@ export default function App() {
               ),
             }}
           />
-
           <Tab.Screen
             name="Capture"
             component={CaptureScreen}
@@ -65,7 +68,6 @@ export default function App() {
               ),
             }}
           />
-
           <Tab.Screen
             name="Search"
             component={SearchScreen}
@@ -76,7 +78,6 @@ export default function App() {
               ),
             }}
           />
-
           <Tab.Screen
             name="Reminders"
             component={RemindersScreen}
@@ -87,9 +88,17 @@ export default function App() {
               ),
             }}
           />
-
         </Tab.Navigator>
       </NavigationContainer>
     </>
+  );
+}
+
+// ← App chỉ có nhiệm vụ wrap SafeAreaProvider, không dùng hook ở đây
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppNavigator />
+    </SafeAreaProvider>
   );
 }
