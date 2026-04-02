@@ -168,7 +168,11 @@ export default function CaptureScreen() {
             numberOfLines={4}
           />
         </View>
-
+      <TouchableOpacity 
+      style={styles.Button}
+      onPress={() => console.log('create new note')}>
+          <Text style={styles.dateButtonText}> Create Note </Text>
+      </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -220,6 +224,17 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   dateButton: {
+    backgroundColor: COLORS.surface ?? '#1A1A2E',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#1F2937',
+  },
+  Button: {
+    alignSelf:'center',
+    alignContent:'center',
+    justifyContent:'center',
     backgroundColor: COLORS.surface ?? '#1A1A2E',
     borderRadius: 10,
     paddingHorizontal: 14,
