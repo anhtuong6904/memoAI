@@ -11,7 +11,7 @@ export interface Note {
   content: string;
   summary?: string;        // ? = không bắt buộc
   type: 'text' | 'image' | 'voice';  // chỉ nhận 1 trong 3 giá trị
-  image_path?: string;
+  file_path?: string;
   tags: string;            // JSON string: '["Công việc", "Quan trọng"]'
   created_at: string;
 }

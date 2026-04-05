@@ -1,7 +1,24 @@
 {
   "name": "memoai",
-  "main": "./src/types/index.ts",
   "version": "1.0.0",
+  "private": true,
+  "description": "An intelligent note-taking app powered by LLMs that transforms text, images, audio, and video into actionable reminders. With the integration of Ollama and OpenCLAW, the app analyzes multimodal data, extracts key information, and automatically generates structured notes and smart reminders—quickly, securely, and efficiently.",
+  "keywords": [
+    "smart",
+    "reminders"
+  ],
+  "homepage": "https://github.com/anhtuong6904/memoAI#readme",
+  "bugs": {
+    "url": "https://github.com/anhtuong6904/memoAI/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anhtuong6904/memoAI.git"
+  },
+  "license": "ISC",
+  "author": "anh.tuong.dev",
+  "type": "commonjs",
+  "main": "./src/types/index.ts",
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
@@ -23,6 +40,9 @@
     "@react-navigation/native-stack": "^7.14.10",
     "@s77rt/react-native-date-picker": "^3.1.1",
     "axios": "^1.14.0",
+    "better-sqlite3": "^12.8.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.0",
     "expo": "~54.0.33",
     "expo-av": "~16.0.8",
     "expo-constants": "~18.0.13",
@@ -32,13 +52,15 @@
     "expo-image": "~3.0.11",
     "expo-image-picker": "~17.0.10",
     "expo-linking": "~8.0.11",
-    "expo-notifications": "~0.32.16",
+    "expo-notifications": "^0.32.16",
     "expo-router": "~6.0.23",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "expo-symbols": "~1.0.8",
     "expo-system-ui": "~6.0.9",
     "expo-web-browser": "~15.0.10",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
@@ -59,7 +81,7 @@
     "@types/react-navigation": "^3.0.8",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "nodemon": "^3.1.14",
     "typescript": "~5.9.2"
-  },
-  "private": true
+  }
 }
