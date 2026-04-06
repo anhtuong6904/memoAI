@@ -1,13 +1,15 @@
+
 const Database = require('better-sqlite3');
-const db = new Database('memoai.db');
+const path = require('path');
+const db = new Database(path.join(__dirname,'memoai.db'));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS notes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     content     TEXT NOT NULL,
     summary     TEXT,
-    type        TEXT DEFAULT 'text',
-    image_path  TEXT,
+    type        TEXT    DEFAULT 'text',  -- 'text' | 'image' | 'voice' | 'video'
+    file_path   TEXT,
     tags        TEXT DEFAULT '[]',
     created_at  TEXT NOT NULL
   );
