@@ -3,7 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/colors';
 
-export default function HomeScreen() {
+export default function SearchScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.center}>

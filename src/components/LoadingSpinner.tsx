@@ -1,26 +1,30 @@
 import React from 'react';
-import {ActivityIndicator, StyleSheet} from 'react-native';
-import {SafeAreaView, SafeAreaProvider} from 'react-native-safe-area-context';
+import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
+import { COLORS } from '../constants/colors';
+import { LoadingSpinnerProps } from '../types';
 
-const App = () => (
-  <SafeAreaProvider>
-    <SafeAreaView style={[styles.container, styles.horizontal]}>
-      <ActivityIndicator />
-      <ActivityIndicator size="large" />
-    </SafeAreaView>
-  </SafeAreaProvider>
-);
+export default function LoadingSpinner({
+  size  = 'large',
+  color = COLORS.accent,
+}: LoadingSpinnerProps) {
+  return (
+    <View style={styles.container}>
+      <ActivityIndicator size={size} color={color} />
+      <Text style={styles.text}>Đang tải...</Text>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: COLORS.background,
   },
-  horizontal: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    padding: 10,
+  text: {
+    marginTop: 12,
+    fontSize: 14,
+    color: COLORS.textMuted,
   },
 });
-
-export default App;
