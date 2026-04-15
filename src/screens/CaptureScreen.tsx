@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput,
   TouchableOpacity, ScrollView, Alert,
@@ -6,248 +6,224 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { COLORS } from '../constants/colors';
+import { CaptureMode } from '../types';
+import CaptureContentComposer from '../components/capture/CaptureContentComposer';
+import CaptureDateTimeRow from '../components/capture/CaptureDateTimeRow';
+import CaptureHeader from '../components/capture/CaptureHeader';
+import CaptureModeTabs from '../components/capture/CaptureModeTabs';
+import CaptureSectionCard from '../components/capture/CaptureSectionCard';
+import CaptureAttachmentQuickAction from '../components/capture/CaptureAttachmentQuickActions';
+import CaptureTitleInput from '../components/capture/CaptureTitleInput';
 
 export default function CaptureScreen() {
-  const [title, setTitle]               = useState('');
-  const [desc, setDesc]                 = useState('');
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [startTime, setStartTime]       = useState<Date | null>(null);
-  const [endTime, setEndTime]           = useState<Date | null>(null);
 
-  const [isDatePickerVisible,  setDatePickerVisibility] = useState(false);
-  const [isStartTimeVisible,   setStartTimeVisible]     = useState(false);
-  const [isEndTimeVisible,     setEndTimeVisible]       = useState(false);
+  //set cac stat
+  const [mode, setMode] = useState<CaptureMode>('note');
+  const [title, setTitle] = useState('');
+  const [desc, setDesc] = useState('');
+  const [selectedDate, setSelectedDate] = useState <Date | null>(null);
+  const [startTime, setStartTime] = useState<Date | null>(null);
+  const [endTime, setEndTime] = useState<Date |null> (null);
+  const [tags, setTags] = useState('');
+  const [isDatePickerVisible, setDatePickerVisibility] = useState(false);
+  const [isStartTimeVisible, setStartTimeVisible] = useState(false);
+  const [isEndTimeVisible, setEndTimeVisible] = useState(false);
+
+
+  const dateLabel = useMemo(
+    () => (selectedDate ? selectedDate.toLocaleDateString('vi-VN') : 'Chọn ngày'),
+    [selectedDate],
+  );
+
+  const startLabel = useMemo(
+    () => (startTime ? formatTime(startTime) : 'Bắt đầu'),
+    [startTime],
+  );
+
+  const endLabel = useMemo(
+    () => (endTime ? formatTime(endTime) : 'Kết thúc'),
+    [endTime],
+  );
 
   const handleConfirmDate = (date: Date) => {
-    setSelectedDate(date);
+    setSelectedDate (date);
     setDatePickerVisibility(false);
-  };
+  }
 
-  const handleConfirmStartTime = (time: Date) => {
+  const handleConfirmStartTime = (time: Date) => { 
     setStartTime(time);
-    setStartTimeVisible(false);
-  };
+    setDatePickerVisibility(false);
+  }
 
   const handleConfirmEndTime = (time: Date) => {
-    if (startTime && time <= startTime) {
-      Alert.alert('Lỗi', 'Giờ kết thúc phải sau giờ bắt đầu!');
+    if(startTime && time <= startTime){
+      Alert.alert('Lỗi', 'Giờ kết thúc phải sau giờ bắt đàu!');
       return;
     }
     setEndTime(time);
     setEndTimeVisible(false);
-  };
+  }
 
-  const handleCreate = () => {
-    if (!title.trim()) {
+  const handelAddAttachment = (type: string) => {
+    Alert.alert('Thông báo', `Bạn chọn thêm ${type}.`);
+  }
+
+  const handleCreate = () =>{
+    if(!title.trim()){
       Alert.alert('Thiếu thông tin', 'Vui lòng nhập tiêu đề');
       return;
     }
-    // TODO: gọi API createNote()
-    console.log('Tạo note:', { title, desc, selectedDate, startTime, endTime });
-    Alert.alert('Thành công', 'Đã tạo ghi chú!');
-  };
+    //goi API createNote()/upload
+    console.log('Taọ note: ', {mode, title, desc, tags, selectedDate, startTime, endTime});
+    Alert.alert('Thành công', "Đã tạo ghi chú!");
+  }
 
-  const formatTime = (date: Date) =>
-    date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
+  return(
+    <SafeAreaView style = {styles.container}>
+      <ScrollView 
+      contentContainerStyle = {styles.scroll}
+      keyboardShouldPersistTaps = 'handled'
+      showsVerticalScrollIndicator = {false}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Tạo ghi chú</Text>
-        </View>
 
-        {/* Tiêu đề */}
-        <View style={styles.inputArea}>
-          <Text style={styles.label}>Tiêu đề *</Text>
+        {/* {bố cục gồm các section card từ header content calender attachment AI Summary button create} */}
+        <CaptureHeader 
+          title='Quick Capture'
+          subtitle=''
+        />
+
+        <CaptureModeTabs mode={mode} onModeChange={setMode}/>
+
+        <CaptureSectionCard 
+        label='Tiêu đề' 
+        helper=''>
+          <CaptureTitleInput value={title} onChangeText={setTitle}/>
+        </CaptureSectionCard>
+
+        <CaptureSectionCard 
+        label='Nội dung' 
+        helper=''>
+          <CaptureContentComposer value={desc} onChangeText={setDesc}/>
           <TextInput
-            style={styles.textbox}
-            placeholder="Nhập tiêu đề..."
+            style={[styles.tagInput]}
+            placeholder='#project #learning #urgent'
             placeholderTextColor={COLORS.textMuted}
-            value={title}
-            onChangeText={setTitle}
+            value={tags}
+            onChangeText={setTags}
           />
-        </View>
+        </CaptureSectionCard>
 
-        {/* Mô tả */}
-        <View style={styles.inputArea}>
-          <Text style={styles.label}>Mô tả chi tiết</Text>
-          <TextInput
-            style={[styles.textbox, styles.textboxMulti]}
-            placeholder="Nhập mô tả..."
-            placeholderTextColor={COLORS.textMuted}
-            value={desc}
-            onChangeText={setDesc}      // ✅ Fix: CaptureScreen dùng desc riêng
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
+        <CaptureSectionCard label="Lịch" helper="Đặt thời gian cho task hoặc meeting note">
+          <CaptureDateTimeRow
+            dateLabel={dateLabel}
+            startLabel={startLabel}
+            endLabel={endLabel}
+            onPickDate={() => setDatePickerVisibility(true)}
+            onPickStart={() => setStartTimeVisible(true)}
+            onPickEnd={() => setEndTimeVisible(true)}
           />
-        </View>
+        </CaptureSectionCard>
 
-        {/* Ngày */}
-        <View style={styles.inputArea}>
-          <Text style={styles.label}>Ngày</Text>
-          <TouchableOpacity
-            style={styles.pickerButton}
-            onPress={() => setDatePickerVisibility(true)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.pickerText}>
-              📅{'  '}
-              {selectedDate
-                ? selectedDate.toLocaleDateString('vi-VN')
-                : 'Chọn ngày...'}
-            </Text>
-          </TouchableOpacity>
-          <DateTimePickerModal
-            isVisible={isDatePickerVisible}
-            mode="date"
-            onConfirm={handleConfirmDate}
-            onCancel={() => setDatePickerVisibility(false)}
-          />
-        </View>
-
-        {/* Giờ bắt đầu */}
-        <View style={styles.inputArea}>
-          <Text style={styles.label}>Giờ bắt đầu</Text>
-          <TouchableOpacity
-            style={styles.pickerButton}
-            onPress={() => setStartTimeVisible(true)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.pickerText}>
-              ⏰{'  '}
-              {startTime ? formatTime(startTime) : 'Chọn giờ bắt đầu...'}
-            </Text>
-          </TouchableOpacity>
-          <DateTimePickerModal
-            isVisible={isStartTimeVisible}
-            mode="time"
-            onConfirm={handleConfirmStartTime}
-            onCancel={() => setStartTimeVisible(false)}
-          />
-        </View>
-
-        {/* Giờ kết thúc */}
-        <View style={styles.inputArea}>
-          <Text style={styles.label}>Giờ kết thúc</Text>
-          <TouchableOpacity
-            style={styles.pickerButton}
-            onPress={() => setEndTimeVisible(true)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.pickerText}>
-              ⏰{'  '}
-              {endTime ? formatTime(endTime) : 'Chọn giờ kết thúc...'}
-            </Text>
-          </TouchableOpacity>
-          <DateTimePickerModal
-            isVisible={isEndTimeVisible}
-            mode="time"
-            onConfirm={handleConfirmEndTime}
-            onCancel={() => setEndTimeVisible(false)}
-          />
-        </View>
-
-        {/* AI phân tích — readonly */}
-        <View style={styles.inputArea}>
-          <Text style={styles.label}>💡 AI phân tích</Text>
-          <View style={[styles.textbox, styles.textboxMulti, styles.aiBox]}>
+        <CaptureSectionCard 
+        label='Đính kèm' 
+        helper='ảnh, video, audio, tài liệu'>
+          <CaptureAttachmentQuickAction onPress={handelAddAttachment}/>
+        </CaptureSectionCard>
+         <CaptureSectionCard 
+        label='Summary' 
+        helper='AI sẽ phân tích'>
+          <View style={styles.aiBox}>
             <Text style={styles.aiText}>
               AI sẽ phân tích và đưa ra gợi ý sau khi bạn lưu ghi chú...
+              • Tóm tắt ngắn 2-3 dòng{`\n`}
+              • Trích action items{`\n`}
+              • Gợi ý nhắc nhở liên quan
             </Text>
           </View>
-        </View>
+        </CaptureSectionCard>
 
-        {/* Nút tạo */}
+        {/*nut tao*/}
         <TouchableOpacity
           style={styles.createButton}
           onPress={handleCreate}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
         >
-          <Text style={styles.createButtonText}>＋  Tạo ghi chú</Text>
+          <Text style={styles.createButtonText}>+ Create</Text>
+          <Text style={styles.createButtonText}>Lưu ghi chú</Text>
         </TouchableOpacity>
 
+        <DateTimePickerModal
+          isVisible={isDatePickerVisible}
+          mode="datetime"
+          onConfirm={handleConfirmDate}
+          onCancel={() => setDatePickerVisibility(false)}
+        />
+
+        <DateTimePickerModal
+          isVisible={isStartTimeVisible}
+          mode="datetime"
+          onConfirm={handleConfirmStartTime}
+          onCancel={() => setStartTimeVisible(false)}
+        />
+
+        <DateTimePickerModal
+          isVisible={isEndTimeVisible}
+          mode="datetime"
+          onConfirm={handleConfirmEndTime}
+          onCancel={() => setEndTimeVisible(false)}
+        />
       </ScrollView>
+
     </SafeAreaView>
-  );
+  )
 }
 
+const formatTime = (date: Date) =>
+  date.toLocaleDateString('vi-VN', {hour: '2-digit', minute: '2-digit'});
+
 const styles = StyleSheet.create({
-  container: {
+  container:{
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor:COLORS.background,
   },
-  scroll: {
-    paddingHorizontal: 16,
+  scroll:{
+    paddingHorizontal:16,
     paddingBottom: 40,
   },
-  header: {
-    paddingVertical: 16,
-  },
-  headerTitle: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: COLORS.textMuted,
-    marginBottom: 6,
-  },
-  inputArea: {
-    marginBottom: 16,
-  },
-  textbox: {
-    fontSize: 15,
-    color: COLORS.text,
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  textboxMulti: {
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  pickerButton: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  pickerText: {
-    fontSize: 15,
-    color: COLORS.text,
-  },
-  aiBox: {
-    justifyContent: 'center',
-    opacity: 0.6,
-  },
-  aiText: {
+  tagInput:{
     fontSize: 14,
+    color: COLORS.text,
+    borderRadius: 10,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: COLORS.backgroundProp
+  },
+  aiBox:{
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.backgroundProp,
+    padding: 12,
+  },
+  aiText:{
     color: COLORS.textMuted,
-    fontStyle: 'italic',
+    fontSize: 13,
+    lineHeight: 20,
   },
-  createButton: {
+  createButton:{
+    marginTop: 6,
     backgroundColor: COLORS.accent,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 8,
+    borderRadius: 12,
+    alignItems:'center',
+    justifyContent: 'center',
+    paddingVertical: 15,
   },
-  createButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
+  createButtonText:{
     color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight:'700',
   },
 });
+

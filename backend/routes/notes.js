@@ -1,212 +1,202 @@
 const express = require('express');
-const router = express.Router();
-const db = require('../db/database');
-const {uploadAudio, uploadVideo, uploadImage} = require('../middleware/upload');
-const { params } = require('../db/database');
+const router  = express.Router();
+const db      = require('../db/database');
 
-//get api/notes 
-//lay tat ca cac note trong data
+// ✅ Bỏ dòng import params không tồn tại
+const { uploadAudio, uploadVideo, uploadImage } = require('../middleware/upload');
+
+// GET /api/notes
 router.get('/', (req, res) => {
-    try{
-        // truy van cac ghi chu sap xep theo thu tu mo nhat len truoc
-        const notes = db
-        .prepare('SELECT * FROM notes ORDER BY created_at DESC')
-        .all(); 
-        res.json(notes);
-    }
-    catch (err){
-        res.status(500).json({error: err.message});
-    }
+  try {
+    const notes = db
+      .prepare('SELECT * FROM notes ORDER BY created_at DESC')
+      .all();
+    res.json(notes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-//get api/notes/search?p=keyword 
-//lay note co theo keyword co trong content hay summary
-//"search" la id va chay nham router ben duoi 
-router.get('/search', (req,res) => {
-    try{
-        const q = req.query.q || '';
-        const notes = db
-        .prepare('SELECT * FROM notes WHERE content LIKE ? OR summary LIKE ? ORDER BY created_at DESC')
-        .all(`%${q}%`, `%${q}%`);// '%' wild card de tim keyword q ben trong summary hay content
-        res.json(notes);
-    }
-    catch(err){
-        res.status(500).json({error: err.message});
-    }
+// GET /api/notes/search?q=keyword
+router.get('/search', (req, res) => {
+  try {
+    const q = req.query.q || '';
+    const notes = db
+      .prepare(`
+        SELECT * FROM notes
+        WHERE content LIKE ? OR summary LIKE ?
+        ORDER BY created_at DESC
+      `)
+      .all(`%${q}%`, `%${q}%`);
+    res.json(notes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-//get api/notes/:id 
-//lay 1 note = id
-router.get('/:id', (req, res) =>{
-    try{
-        const note = db
-        .prepare('SELECT * FROM notes WHERE ID = ?')
-        .get(req.params.id);// .get() = tra ve 1 note hoac undefined
+// GET /api/notes/:id
+router.get('/:id', (req, res) => {
+  try {
+    const note = db
+      .prepare('SELECT * FROM notes WHERE id = ?')
+      .get(req.params.id);
 
-        if(!note){
-            return res.status(404).json({error: 'Không thể tìm thấy note'});
-        }
-
-        res.json(note);
+    if (!note) {
+      return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
     }
-    catch(err){
-        res.status(500).json({error: err.message});
-    }   
+    res.json(note);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-//post api/notes
-//tao ghi chu moi tu text;
-//body: {context: string, type?: string}
-router.post('/', (req,res) => {
-    try{
-        const {content, type = 'text'} = req.body;
+// POST /api/notes — tạo ghi chú text
+router.post('/', (req, res) => {
+  try {
+    const { content, type = 'text' } = req.body;
 
-        if(!content || content.trim() === ''){
-            return res.status(400).json({error: 'Nội dung không được để trống'});
-        }
-        //lay tao thoi diem tao note
-        const now = new Date().toISOString();
-        //.run() = thuc thi INSERT/UPDATE/DELETE
-        //tra ve {lastInsertRowId, changes}
-        const result = db
-        .prepare('INSERT INTO notes (content, type, tags, created_at) VALUES (?, ?, [], ?)')
-        .run(content.trim(), type, now);
-        //lay lai note moi vua tao de tra ve cho client
-        const newNote = db
-        .prepare('SELECT * FROM notes WHERE id = ?')
-        .get(result.lastInsertRowid);
-        
-        res.status(201).json(newNote);
+    if (!content || content.trim() === '') {
+      return res.status(400).json({ error: 'Nội dung không được để trống' });
     }
-    catch(err){
-        res.status(500).json({error: err.message});
-    }
-})
 
-//post api/notes/images
-//upload file de tao ghi chu tu file co cac dinh dang am thanh, anh, clip,....
-//dung multer middleware de xu ly file upload
+    const now = new Date().toISOString();
+
+    // ✅ Fix: tags phải là string '[]' trong SQL
+    const result = db
+      .prepare(`
+        INSERT INTO notes (content, type, tags, created_at)
+        VALUES (?, ?, '[]', ?)
+      `)
+      .run(content.trim(), type, now);
+
+    const newNote = db
+      .prepare('SELECT * FROM notes WHERE id = ?')
+      .get(result.lastInsertRowid);
+
+    res.status(201).json(newNote);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/notes/image
 router.post('/image', (req, res) => {
-    uploadImage(req, res, (err) => {
-        //xu li loi
-        if(err) return res.status(400).json({error : err.message});
-        if(!req.file) return  res.status(400).json({error: 'Khong co file'});
-        
-        // req.file.path = URL Cloudinary
-        const fileUrl = req.file.path;
-        const now = new Date().toISOString();
+  uploadImage(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'Không có file ảnh' });
 
-        const result = db
-        .prepare("INSERT INTO notes (content, type, file_path, tags, created_at) VALUES (?, 'image', ?, '[]', ?)")
-        .run('Đang xử lý ảnh...', fileUrl, now);
-        
-        const newNote = db
-        .prepare('SELECT * FROM notes WHERE id = ? ')
-        .get(result.lastInsertRowid);
+    const fileUrl = req.file.path;
+    const now     = new Date().toISOString();
 
-        res.status(201).json(newNote);
-    })
-})
-
-//upload file audio
-router.post('/audio', (req, res) => {
-    uploadAudio(req, res, (err) => {
-        //xu li loi
-        if(err) return res.status(400).json({error : err.message});
-        if(!req.file) return  res.status(400).json({error: 'Khong co file'});
-        
-        // req.file.path = URL Cloudinary
-        const fileUrl = req.file.path;
-        const now = new Date().toISOString();
-
-        const result = db
-        .prepare(`
+    // type = 'image' ✅ khớp schema
+    const result = db
+      .prepare(`
         INSERT INTO notes (content, type, file_path, tags, created_at)
-        VALUES (?, 'audio', ?, '[]', ?)
-        `).run('Đang xử lý âm thanh...', fileUrl, now);
-        
-        const newNote = db
-        .prepare('SELECT * FROM notes WHERE id = ? ')
-        .get(result.lastInsertRowid);
+        VALUES (?, 'image', ?, '[]', ?)
+      `)
+      .run('Đang xử lý ảnh...', fileUrl, now);
 
-        res.status(201).json(newNote);
-    })
-})
+    const newNote = db
+      .prepare('SELECT * FROM notes WHERE id = ?')
+      .get(result.lastInsertRowid);
 
-//upload video 
+    res.status(201).json(newNote);
+  });
+});
+
+// POST /api/notes/audio
+router.post('/audio', (req, res) => {
+  uploadAudio(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'Không có file audio' });
+
+    const fileUrl = req.file.path;
+    const now     = new Date().toISOString();
+
+    // ✅ Fix: 'audio' → 'voice' cho khớp schema
+    const result = db
+      .prepare(`
+        INSERT INTO notes (content, type, file_path, tags, created_at)
+        VALUES (?, 'voice', ?, '[]', ?)
+      `)
+      .run('Đang xử lý âm thanh...', fileUrl, now);
+
+    const newNote = db
+      .prepare('SELECT * FROM notes WHERE id = ?')
+      .get(result.lastInsertRowid);
+
+    res.status(201).json(newNote);
+  });
+});
+
+// POST /api/notes/video
 router.post('/video', (req, res) => {
-    uploadVideo(req, res, (err) => {
-        //xu li loi
-        if(err) return res.status(400).json({error : err.message});
-        if(!req.file) return  res.status(400).json({error: 'Khong co file'});
-        
-        // req.file.path = URL Cloudinary
-        const fileUrl = req.file.path;
-        const now = new Date().toISOString();
+  uploadVideo(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'Không có file video' });
 
-        const result = db
-        .prepare(`
+    const fileUrl = req.file.path;
+    const now     = new Date().toISOString();
+
+    // type = 'video' ✅ khớp schema
+    const result = db
+    
+      .prepare(`
         INSERT INTO notes (content, type, file_path, tags, created_at)
         VALUES (?, 'video', ?, '[]', ?)
-        `).run('Đang xử lý video...', fileUrl, now);
-        
-        const newNote = db
-        .prepare('SELECT * FROM notes WHERE id = ? ')
-        .get(result.lastInsertRowid);
+      `)
+      .run('Đang xử lý video...', fileUrl, now);
 
-        res.status(201).json(newNote);
-    })
-})
+    const newNote = db
+      .prepare('SELECT * FROM notes WHERE id = ?')
+      .get(result.lastInsertRowid);
 
-//put /api/notes/:id
-//cap nhat note (content, summary, tag);
-//body:{content?, summary?, tags?}
-router.put('/:id', (req, res)=>{
-    try{
-        const {content, summary, tags} = req.body;
-        const {id} = req.params;
+    res.status(201).json(newNote);
+  });
+});
 
-        //kiem tra note da ton tai chua;
-        const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
-        if(!existing){
-            return res.status(404).json({error : 'khong tim thay note'});
-        }
-        //chi cap nhat field nao dang gui len 
-        // ?? = nullish coalescing: dung existing neu khong co gia tri moi 
-        db.prepare('UPDATE notes SET content = ? , summary = ? , tags = ? WHERE id = ?')
-        .run(content ?? existing.content,
-            summary ?? existing.summary,
-            tags ?? existing.tags,
-            id
-        )
-        const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
-        res.json(updated);
+// PUT /api/notes/:id
+router.put('/:id', (req, res) => {
+  try {
+    const { content, summary, tags } = req.body;
+    const { id }                     = req.params;
+
+    const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
     }
-    catch(err){
-        res.status(500).json({ error: err.message });
+
+    db.prepare(`
+      UPDATE notes SET content = ?, summary = ?, tags = ? WHERE id = ?
+    `).run(
+      content ?? existing.content,
+      summary ?? existing.summary,
+      tags    ?? existing.tags,
+      id
+    );
+
+    const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/notes/:id
+router.delete('/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
     }
-})
 
-//delete /api/notes/:id
-//xoa ghi chu
-router.delete('/:id', (req,res)=>{
-    try{
-        const {id} = req.params;
-
-        const existing = db
-        .prepare('SELECT * FROM notes WHERE id = ?')
-        .get(id);
-
-        if(!existing){
-            return res.status(404).json({error: 'khong tim thay note'});
-        }
-        db.prepare('DELETE FROM notes WHERE id = ?').run(id);
-        res.json({message: 'da xoa ghi chu', id: Number(id)});
-    }
-    catch(err){
-        res.status(500).json({error: err.message});
-    }
-})
-
+    db.prepare('DELETE FROM notes WHERE id = ?').run(id);
+    res.json({ message: 'Đã xóa ghi chú', id: Number(id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 module.exports = router;

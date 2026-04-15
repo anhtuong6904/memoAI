@@ -1,8 +1,6 @@
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const {CloudinaryStorage} = require('multer-storage-cloudinary');
-const { param } = require('../routes/notes');
-const { transaction } = require('../db/database');
 
 
 require('dotenv').config();

@@ -1,3 +1,6 @@
+import iconSet from '@expo/vector-icons/build/Fontisto';
+import Fontisto from '@expo/vector-icons/Fontisto';
+
 //khoi tao kieu du lieu Note
 export interface Note {
   id:           number;
@@ -56,6 +59,8 @@ export type RootTabParamList ={
 }
 
 //api response
+
+
 export interface ApiError {
     error: string;
 }
@@ -65,3 +70,55 @@ export interface DeleteResponse{
     id: number;
 }
 
+//capture component
+export interface ActionItem{
+    key: string;
+    icon: React.ReactElement;
+    label: string;
+}
+export interface CaptureAttachmentQuickActionProps{
+    onPress: (key:string) => void;
+}
+export interface CaptureContentComposerProps {
+  value: string;
+  onChangeText: (text: string) => void;
+}
+
+export interface MarkdownTemplate {
+  key: string;
+  
+  label: string;
+  snippet: string;
+}
+
+export interface CaptureDateTimeRowProps{
+    dateLabel: string;
+    startLabel: string;
+    endLabel: string;
+    onPickDate:() => void;
+    onPickStart:() => void;
+    onPickEnd: () => void;
+}
+
+export interface CaptureHeaderProps{
+    title: string;
+    subtitle?: string
+}
+
+export type CaptureMode = 'note' | 'task' | 'meeting';
+
+export interface CaptureModeTabsProps {
+  mode: CaptureMode;
+  onModeChange: (mode: CaptureMode) => void;
+}
+
+export interface CaptureSectionCardProps{
+    label: string;
+    helper?: string;
+    children: React.ReactNode;
+}
+
+export interface CaptureTitleInputProps {
+  value: string;
+  onChangeText: (text: string) => void;
+}

@@ -1,5 +1,6 @@
 export const COLORS = {
   background:   '#0F0F0F',
+  backgroundProp: '#101522', 
   surface:      '#1A1A2E',
   surfaceLight: '#252542',
   accent:       '#6C63FF',
@@ -10,4 +11,5 @@ export const COLORS = {
   success:      '#10B981',
   warning:      '#F59E0B',
   danger:       '#EF4444',
+  active:       'rgba(108, 99, 255, 0.18)',
 } as const;
