@@ -50,19 +50,19 @@ const videoStorage = new CloudinaryStorage({
 
 //file filter image, audio, video
 const imageFilter = (req, file, cb) => {
-    file.mimetype.startWith('images/')
+    file.mimetype.startsWith('image/')
     ? cb(null, true)
     : cb(new Error('chi chap nhan file anh'), false);
 }
 
 const audioFilter = (req, file, cb) => {
-    file.mimetype.startWith('audio/')
+    file.mimetype.startsWith('audio/')
     ? cb(null, true)
     : cb(new Error('chi chap nhan file audio'), false);
 }
 
 const videoFilter = (req, file, cb) => {
-    file.mimetype.startWith('videos/')
+    file.mimetype.startsWith('video/')
     ? cb(null, true)
     : cb(new Error('chi chap nhan file video'), false);
 }
