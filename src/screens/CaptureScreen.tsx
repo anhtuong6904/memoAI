@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput,
-  TouchableOpacity, ScrollView, Alert,
+  ScrollView, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
@@ -14,11 +14,13 @@ import CaptureModeTabs from '../components/capture/CaptureModeTabs';
 import CaptureSectionCard from '../components/capture/CaptureSectionCard';
 import CaptureAttachmentQuickAction from '../components/capture/CaptureAttachmentQuickActions';
 import CaptureTitleInput from '../components/capture/CaptureTitleInput';
+import { Icon } from '../constants/Icon';
 
 export default function CaptureScreen() {
 
   //set cac stat
   const [mode, setMode] = useState<CaptureMode>('note');
+  // const [isKeyboardVisible, setKeyboardVisible]  = useState(false);
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
   const [selectedDate, setSelectedDate] = useState <Date | null>(null);
@@ -52,12 +54,13 @@ export default function CaptureScreen() {
 
   const handleConfirmStartTime = (time: Date) => { 
     setStartTime(time);
-    setDatePickerVisibility(false);
+    setStartTimeVisible(false);
   }
 
   const handleConfirmEndTime = (time: Date) => {
     if(startTime && time <= startTime){
       Alert.alert('Lỗi', 'Giờ kết thúc phải sau giờ bắt đàu!');
+      setEndTimeVisible(false);
       return;
     }
     setEndTime(time);
@@ -74,23 +77,29 @@ export default function CaptureScreen() {
       return;
     }
     //goi API createNote()/upload
-    console.log('Taọ note: ', {mode, title, desc, tags, selectedDate, startTime, endTime});
+    console.log('Taọ note:', JSON.stringify({
+      mode, title, desc, tags, selectedDate, startTime, endTime
+    }, null, 2));
     Alert.alert('Thành công', "Đã tạo ghi chú!");
   }
 
   return(
     <SafeAreaView style = {styles.container}>
-      <ScrollView 
-      contentContainerStyle = {styles.scroll}
-      keyboardShouldPersistTaps = 'handled'
-      showsVerticalScrollIndicator = {false}
-      >
-
-        {/* {bố cục gồm các section card từ header content calender attachment AI Summary button create} */}
+      {/* {bố cục gồm các section card từ header content calender attachment AI Summary button create} */}
+      <View style = {styles.header}>
         <CaptureHeader 
-          title='Quick Capture'
-          subtitle=''
-        />
+        title='Quick Capture'
+        onActionPress={handleCreate}
+      />
+      </View>
+      <ScrollView 
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >  
+      
+        
 
         <CaptureModeTabs mode={mode} onModeChange={setMode}/>
 
@@ -98,14 +107,11 @@ export default function CaptureScreen() {
         label='Tiêu đề' 
         helper=''>
           <CaptureTitleInput value={title} onChangeText={setTitle}/>
-        </CaptureSectionCard>
-
-        <CaptureSectionCard 
-        label='Nội dung' 
-        helper=''>
           <CaptureContentComposer value={desc} onChangeText={setDesc}/>
           <TextInput
             style={[styles.tagInput]}
+            // onFocus={() => setKeyboardVisible(true)}
+            // onBlur={() => setKeyboardVisible(false)}
             placeholder='#project #learning #urgent'
             placeholderTextColor={COLORS.textMuted}
             value={tags}
@@ -142,15 +148,6 @@ export default function CaptureScreen() {
           </View>
         </CaptureSectionCard>
 
-        {/*nut tao*/}
-        <TouchableOpacity
-          style={styles.createButton}
-          onPress={handleCreate}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.createButtonText}>+ Create</Text>
-          <Text style={styles.createButtonText}>Lưu ghi chú</Text>
-        </TouchableOpacity>
 
         <DateTimePickerModal
           isVisible={isDatePickerVisible}
@@ -179,12 +176,23 @@ export default function CaptureScreen() {
 }
 
 const formatTime = (date: Date) =>
-  date.toLocaleDateString('vi-VN', {hour: '2-digit', minute: '2-digit'});
+  date.toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
 const styles = StyleSheet.create({
   container:{
     flex: 1,
     backgroundColor:COLORS.background,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   scroll:{
     paddingHorizontal:16,

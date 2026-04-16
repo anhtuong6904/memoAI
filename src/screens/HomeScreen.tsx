@@ -10,6 +10,10 @@ import NoteCard from '../components/NoteCard';
 import EmptyState from '../components/EmptyState';
 import SearchBar from '../components/SearchBar';
 
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../types';
+
 // Data tạm — sau này thay bằng API
 const DATA: Note[] = [
   {
@@ -38,15 +42,26 @@ const DATA: Note[] = [
   },
 ];
 
+type NavigationProp = NativeStackNavigationProp<
+  RootStackParamList,
+  'HomeList'
+>;
+
 export default function HomeScreen() {
   const [notes, setNotes]       = useState<Note[]>(DATA);
   const [search, setSearch]     = useState('');
+  const navigation = useNavigation<NavigationProp>();
 
   // Lọc notes theo search
   const filtered = notes.filter(n =>
     n.content.toLowerCase().includes(search.toLowerCase()) ||
     (n.summary ?? '').toLowerCase().includes(search.toLowerCase())
   );
+
+  
+  const handleNote = (note: Note) => {
+    navigation.navigate('Detail', { note });
+  };
 
   const handleDelete = (id: number) => {
     setNotes(prev => prev.filter(n => n.id !== id));
@@ -55,7 +70,7 @@ export default function HomeScreen() {
   const renderItem: ListRenderItem<Note> = ({ item }) => (
     <NoteCard
       note={item}
-      onPress={()   => console.log('Mở note:', item.id)}
+      onPress={() => handleNote(item)}
       onDelete={()  => handleDelete(item.id)}
       onHold={()    => console.log('Hold:', item.id)}
     />

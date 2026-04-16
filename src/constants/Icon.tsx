@@ -12,7 +12,8 @@ export type IconName =
   | 'url'
   | 'note'
   | 'task'
-  | 'meeting';
+  | 'meeting'
+  | 'save';
 
 export interface IconProps {
   name: IconName;
@@ -42,6 +43,8 @@ export const Icon = ({
       return <Fontisto name="mic" size={size} color={color} />;
     case 'url':
       return <Fontisto name="link" size={size} color={color} />;
+    case 'save':
+      return <MaterialIcons name="save"size={size} color={color} />
     default:
       return null; 
   }

@@ -2,9 +2,10 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { NoteCardProps } from '../types';
 
-export default function NoteCard({ note, onPress }: NoteCardProps) {
+// NoteCardProps yêu cầu onDelete, onHold nhưng component không nhận
+export default function NoteCard({ note, onPress, onDelete, onHold }: NoteCardProps) {
   const tags: string[] = JSON.parse(note.tags || '[]');
-
+  
   return (
     <TouchableOpacity style={styles.card} onPress={onPress}>
       <Text style={styles.title} numberOfLines={2}>

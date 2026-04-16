@@ -78,6 +78,16 @@ function AppNavigator() {
               ),
             }}
           />
+          {/* <Tab.Screen
+            name="Detail"
+            component={DetailScreen}
+            // options={{
+            //   tabBarLabel: 'Tìm kiếm',
+            //   tabBarIcon: ({ color, size }) => (
+            //     <Ionicons name="search-outline" size={size} color={color} />
+            //   ),
+            // }}
+          /> */}
           <Tab.Screen
             name="Reminders"
             component={RemindersScreen}
@@ -99,6 +109,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AppNavigator />
+      {/* <HomeStack/> */}
     </SafeAreaProvider>
   );
 }

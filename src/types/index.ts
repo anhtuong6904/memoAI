@@ -48,7 +48,7 @@ export interface LoadingSpinnerProps{
 //khoi tao params cho navigation
 export type RootStackParamList = {
     HomeList: undefined;
-    Detail: {noteId: number};
+    Detail: {note: Note};
 }
 
 export type RootTabParamList ={
@@ -102,7 +102,9 @@ export interface CaptureDateTimeRowProps{
 
 export interface CaptureHeaderProps{
     title: string;
-    subtitle?: string
+    subtitle?: string;
+    actionIcon?: React.ReactElement;
+    onActionPress?: () => void;
 }
 
 export type CaptureMode = 'note' | 'task' | 'meeting';
@@ -122,3 +124,26 @@ export interface CaptureTitleInputProps {
   value: string;
   onChangeText: (text: string) => void;
 }
+
+export interface ChatInputProp{
+    
+} 
+export interface ChatInputField{
+    
+} 
+
+export interface ChatInputActions{
+
+}
+
+export interface MessageListProp{
+
+}
+export interface MessageItem{
+
+}
+export interface MessageBubble{
+
+}
+
+
