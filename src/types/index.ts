@@ -25,7 +25,7 @@ export interface Reminder{
 //khoi tao kieu props cho NoteCard component
 export interface NoteCardProps{
     note: Note;
-    onPress?: () => void;
+    onPress: () => void;
     onDelete?: () => void;
     onHold?:() => void;
 }
@@ -47,8 +47,8 @@ export interface LoadingSpinnerProps{
 
 //khoi tao params cho navigation
 export type RootStackParamList = {
-    HomeList: undefined;
-    Detail: {note: Note};
+  HomeList: undefined;
+  Detail: { noteId: number };
 }
 
 export type RootTabParamList ={
@@ -69,6 +69,47 @@ export interface DeleteResponse{
     message: string;
     id: number;
 }
+
+//error props
+export interface ErrorProps{
+    value?: string;
+    onReload: () => Promise<void>;
+}
+
+//Home Props
+export interface HomeHeaderProps{
+    total: number;
+    loading: boolean;
+    onAddPress: () => void;
+}
+
+export interface HomeSearchSection{
+    value: string;
+    onChange: (text: string) => void;
+}
+
+export const FILTER_TYPES = [
+  { key: 'all',   label: 'Tất cả' },
+  { key: 'text',  label: 'Ghi chú' },
+  { key: 'image', label: 'Ảnh'     },
+  { key: 'voice', label: 'Giọng nói' },
+  { key: 'video', label: 'Video'   },
+] as const;
+
+export type FilterKey = typeof FILTER_TYPES[number]['key'];
+
+
+export interface NotesListProps {
+  data: Note[];
+  loading: boolean;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onDelete: (id: number) => void;
+  onPress: (note: Note) => void; // ✅ thêm dòng này
+  search: string;
+  filter: FilterKey;
+}
+
 
 //capture component
 export interface ActionItem{
@@ -100,11 +141,10 @@ export interface CaptureDateTimeRowProps{
     onPickEnd: () => void;
 }
 
-export interface CaptureHeaderProps{
-    title: string;
-    subtitle?: string;
-    actionIcon?: React.ReactElement;
-    onActionPress?: () => void;
+export interface CaptureHeaderProps {
+  title: string;
+  subtitle?: string;
+  onActionPress?: () => void;
 }
 
 export type CaptureMode = 'note' | 'task' | 'meeting';

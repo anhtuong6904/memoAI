@@ -1,67 +1,78 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { COLORS } from '@/src/constants/colors';
-import { CaptureHeaderProps } from '@/src/types/index';
-import { Icon } from '@/src/constants/Icon';
+import { CaptureHeaderProps } from '@/src/types';
+import { Ionicons } from '@expo/vector-icons';
 
-const savebutton = <Icon name= 'save'/>
 export default function CaptureHeader({
   title,
   subtitle,
-  actionIcon = savebutton,
   onActionPress,
 }: CaptureHeaderProps) {
   return (
-    <View style={styles.container}>
-      <View style={styles.textBlock}>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+    <View style={styles.header}>
+      {/* LEFT (empty để giữ layout cân đối) */}
+      <View>
+        <Text style={styles.headerTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
       </View>
-      {actionIcon && onActionPress ? (
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={onActionPress}
-          activeOpacity={0.85}
-        >
-          {actionIcon}
-        </TouchableOpacity>
-      ) : null}
+      <View>
+
+      </View>
+      <View style = {styles.headerActions}>
+      <TouchableOpacity
+        style={styles.savebutton}
+        onPress={onActionPress}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="checkmark" size={24} color="#fff" />
+      </TouchableOpacity>
+      </View>
     </View>
   );
 }
-
 const styles = StyleSheet.create({
-    container: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingTop: 8,
-        paddingBottom: 4,
+  /* header */
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingTop: 8,
+      paddingBottom: 4,
     },
-    textBlock: {
-        flex: 1,
+    headerTitle: {
+      fontSize: 28,
+      fontWeight: '800',
+      color: COLORS.text,
+      letterSpacing: -0.5,
     },
-    title: {
-        fontSize: 27,
-        fontWeight: '700',
-        color: COLORS.text,
+    headerSub: {
+      fontSize: 13,
+      color: COLORS.textMuted,
+      marginTop: 1,
     },
-    subtitle: {
-        marginTop: 4,
-        fontSize: 13,
-        color: COLORS.textMuted,
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
     },
-    actionButton: {
-        backgroundColor: COLORS.accent,
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        alignSelf: 'center',
+    iconBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      backgroundColor: COLORS.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: COLORS.border,
     },
-    actionButtonText: {
-        color: '#FFFFFF',
-        fontSize: 14,
-        fontWeight: '700',
+    savebutton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: COLORS.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-})
+});

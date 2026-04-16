@@ -7,7 +7,7 @@ require('dotenv').config();
 
 const app = express();
 //doc port tu .env neu khong co thi dung port 3001
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT ;
 
 //cho phep goi API tu IP khac
 app.use(cors());// Cho phép mọi IP khi dev
@@ -52,8 +52,8 @@ app.use((err, req, res, next) => {
 })
 
 //khoi dong server 
-app.listen (PORT, () => {
-  console.log(`SERVER chay tai http://localhost:${PORT}`);
-  console.log(`React Native dùng: http://YOUR_IP:${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/api/health`);
-})
+app.listen(PORT, () => {
+  console.log(`🚀 SERVER: http://localhost:${PORT}`);
+  console.log(`📱 API: http://192.168.1.11:${PORT}/api`);
+  console.log(`❤️ HEALTH: http://192.168.1.11:${PORT}/api/health`);
+});

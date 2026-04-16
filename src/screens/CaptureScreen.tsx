@@ -86,21 +86,20 @@ export default function CaptureScreen() {
   return(
     <SafeAreaView style = {styles.container}>
       {/* {bố cục gồm các section card từ header content calender attachment AI Summary button create} */}
-      <View style = {styles.header}>
+      
         <CaptureHeader 
         title='Quick Capture'
-        onActionPress={handleCreate}
+        subtitle="Nhanh chóng & tiện lợi"
+        onActionPress = {handleCreate}        
       />
-      </View>
+      
       <ScrollView 
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       >  
-      
-        
-
+    
         <CaptureModeTabs mode={mode} onModeChange={setMode}/>
 
         <CaptureSectionCard 
