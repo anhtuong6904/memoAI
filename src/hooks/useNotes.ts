@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Note } from '../types';
-import { getAllNotes, deleteNote as deleteNoteApi } from '../services/api';
+import { getAllNotes, deleteNote as deleteNoteApi, createNote as createNoteApi,getNoteByID as getNoteId } from '../services/api';
 
 interface UseNotesReturn {
   notes: Note[];
@@ -8,7 +8,10 @@ interface UseNotesReturn {
   error: string | null;
   reload: () => Promise<void>;
   removeNote: (id: number) => Promise<void>;
+  createNote: (content: string,title: string ) => Promise<Note>;
 }
+
+
 
 export function useNotes(): UseNotesReturn {
   const [notes, setNotes]     = useState<Note[]>([]);
@@ -33,7 +36,21 @@ export function useNotes(): UseNotesReturn {
     setNotes(prev => prev.filter(n => n.id !== id));
   };
 
+  const getNodeById = async(id: number) => {
+    return await getNoteId(id);
+  }
+
+  const createNote = async (
+    content: string,
+    title: string
+  ): Promise<Note> => {
+
+    const newNote = await createNoteApi(content, title);
+    setNotes(prev => [newNote, ...prev]);
+    return newNote;
+  }
+
   useEffect(() => { reload(); }, [reload]);
 
-  return { notes, loading, error, reload, removeNote };
+  return { notes, loading, error, reload, removeNote, createNote };
 }

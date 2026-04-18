@@ -2,20 +2,30 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
 
-// ✅ Bỏ dòng import params không tồn tại
+
 const { uploadAudio, uploadVideo, uploadImage } = require('../middleware/upload');
 
-// GET /api/notes
+// GET /api/notes — thêm filter is_archived
 router.get('/', (req, res) => {
   try {
-    const notes = db
-      .prepare('SELECT * FROM notes ORDER BY created_at DESC')
-      .all();
+    const { archived = '0', pinned } = req.query;
+
+    let query = 'SELECT * FROM notes WHERE is_archived = ?';
+    const params = [archived === '1' ? 1 : 0];
+
+    if (pinned === '1') {
+      query += ' AND is_pinned = 1';
+    }
+
+    query += ' ORDER BY is_pinned DESC, updated_at DESC';
+
+    const notes = db.prepare(query).all(...params);
     res.json(notes);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // GET /api/notes/search?q=keyword
 router.get('/search', (req, res) => {
@@ -53,7 +63,7 @@ router.get('/:id', (req, res) => {
 // POST /api/notes — tạo ghi chú text
 router.post('/', (req, res) => {
   try {
-    const { content, type = 'text' } = req.body;
+    const { content, title = '', type = 'text' } = req.body;
 
     if (!content || content.trim() === '') {
       return res.status(400).json({ error: 'Nội dung không được để trống' });
@@ -61,13 +71,10 @@ router.post('/', (req, res) => {
 
     const now = new Date().toISOString();
 
-    // ✅ Fix: tags phải là string '[]' trong SQL
-    const result = db
-      .prepare(`
-        INSERT INTO notes (content, type, tags, created_at)
-        VALUES (?, ?, '[]', ?)
-      `)
-      .run(content.trim(), type, now);
+    const result = db.prepare(`
+      INSERT INTO notes (title, content, type, tags, created_at, updated_at)
+      VALUES (?, ?, ?, '[]', ?, ?)
+    `).run(title.trim(), content.trim(), type, now, now);
 
     const newNote = db
       .prepare('SELECT * FROM notes WHERE id = ?')
@@ -155,23 +162,29 @@ router.post('/video', (req, res) => {
   });
 });
 
-// PUT /api/notes/:id
+// PUT /api/notes/:id — cập nhật updated_at khi sửa
 router.put('/:id', (req, res) => {
   try {
-    const { content, summary, tags } = req.body;
-    const { id }                     = req.params;
+    const { content, title, summary, tags } = req.body;
+    const { id } = req.params;
 
     const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
     if (!existing) {
       return res.status(404).json({ error: 'Không tìm thấy ghi chú' });
     }
 
+    const now = new Date().toISOString();
+
     db.prepare(`
-      UPDATE notes SET content = ?, summary = ?, tags = ? WHERE id = ?
+      UPDATE notes
+      SET title = ?, content = ?, summary = ?, tags = ?, updated_at = ?
+      WHERE id = ?
     `).run(
+      title   ?? existing.title,
       content ?? existing.content,
       summary ?? existing.summary,
       tags    ?? existing.tags,
+      now,     // ← luôn cập nhật updated_at
       id
     );
 
@@ -181,6 +194,7 @@ router.put('/:id', (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // DELETE /api/notes/:id
 router.delete('/:id', (req, res) => {
@@ -198,5 +212,40 @@ router.delete('/:id', (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// PATCH /api/notes/:id/pin — toggle ghim
+router.patch('/:id/pin', (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const newVal = existing.is_pinned === 1 ? 0 : 1;
+    db.prepare('UPDATE notes SET is_pinned = ?, updated_at = ? WHERE id = ?')
+      .run(newVal, new Date().toISOString(), id);
+
+    res.json({ id: Number(id), is_pinned: newVal });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/notes/:id/archive — toggle lưu trữ
+router.patch('/:id/archive', (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy' });
+
+    const newVal = existing.is_archived === 1 ? 0 : 1;
+    db.prepare('UPDATE notes SET is_archived = ?, updated_at = ? WHERE id = ?')
+      .run(newVal, new Date().toISOString(), id);
+
+    res.json({ id: Number(id), is_archived: newVal });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 module.exports = router;

@@ -4,12 +4,19 @@ import Fontisto from '@expo/vector-icons/Fontisto';
 //khoi tao kieu du lieu Note
 export interface Note {
   id:           number;
+  title?:       string;        // optional — voice/image có thể không có title
   content:      string;
-  summary?:     string;        // ? = không bắt buộc
-  type:         'text' | 'image' | 'voice' | 'video';  // chỉ nhận 1 trong 3 giá trị
+  summary?:     string;
+  type:         'text' | 'image' | 'voice' | 'video';
   file_path?:   string;
-  tags:         string;            // JSON string: '["Công việc", "Quan trọng"]'
+  tags:         string;        // JSON string
+  source_url?:  string;        // link nguồn nếu capture từ web
+  location?:    string;        // JSON string vị trí
+  is_pinned:    number;        // 0 | 1
+  is_archived:  number;        // 0 | 1
+  ai_processed: number;        // 0 | 1
   created_at:   string;
+  updated_at:   string;
 }
 
 //khoi tao kieu du lieu Reminder
@@ -44,6 +51,44 @@ export interface LoadingSpinnerProps{
     size?: 'small' | 'large';
     color?: string;
 }
+
+export type BlockType =
+  | 'text'        // đoạn văn thường
+  | 'heading1'    // # Tiêu đề lớn
+  | 'heading2'    // ## Tiêu đề vừa
+  | 'heading3'    // ### Tiêu đề nhỏ
+  | 'bullet'      // • danh sách
+  | 'numbered'    // 1. danh sách số
+  | 'checkbox'    // ☐ checklist
+  | 'quote'       // > trích dẫn
+  | 'divider';    // --- đường kẻ ngang
+
+export interface Block {
+  id:       string;   // unique id cho mỗi block
+  type:     BlockType;
+  content:  string;   // nội dung text
+  checked?: boolean;  // chỉ dùng cho type = 'checkbox'
+}
+
+// Lệnh slash menu
+export interface SlashCommand {
+  id:      BlockType;
+  label:   string;
+  icon:    string;
+  desc:    string;
+}
+
+export const SLASH_COMMANDS: SlashCommand[] = [
+  { id: 'text',      icon: '¶',  label: 'Đoạn văn',      desc: 'Văn bản thông thường'   },
+  { id: 'heading1',  icon: 'H1', label: 'Tiêu đề lớn',   desc: 'Cỡ chữ lớn nhất'       },
+  { id: 'heading2',  icon: 'H2', label: 'Tiêu đề vừa',   desc: 'Cỡ chữ vừa'            },
+  { id: 'heading3',  icon: 'H3', label: 'Tiêu đề nhỏ',   desc: 'Cỡ chữ nhỏ'            },
+  { id: 'bullet',    icon: '•',  label: 'Danh sách',      desc: 'Danh sách dấu chấm'    },
+  { id: 'numbered',  icon: '1.', label: 'Danh sách số',   desc: 'Danh sách đánh số'     },
+  { id: 'checkbox',  icon: '☐',  label: 'Checklist',      desc: 'Ô checkbox'             },
+  { id: 'quote',     icon: '"',  label: 'Trích dẫn',      desc: 'Highlight nổi bật'     },
+  { id: 'divider',   icon: '—',  label: 'Đường kẻ',       desc: 'Phân cách nội dung'    },
+];
 
 //khoi tao params cho navigation
 export type RootStackParamList = {

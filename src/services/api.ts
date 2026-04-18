@@ -12,8 +12,16 @@ const api = axios.create({
 
 //notes
 //lay tat ca cac note
-export const getAllNotes = () : Promise<Note[]> => 
-  api.get(`/notes`).then(r => r.data);
+export const getAllNotes = (options?: {
+  archived?: boolean;
+  pinned?:   boolean;
+}): Promise<Note[]> => {
+  const params = new URLSearchParams();
+  if (options?.archived) params.set('archived', '1');
+  if (options?.pinned)   params.set('pinned', '1');
+  return api.get(`/notes?${params.toString()}`).then(r => r.data);
+};
+
 
 //lay note theo id
 export const getNoteByID = (id : number) : Promise<Note> =>
@@ -25,9 +33,14 @@ export const getNoteByID = (id : number) : Promise<Note> =>
 export const searchNote = (q: string) : Promise<Note> =>
   api.get(`/notes/search?q=${encodeURIComponent(q)}`).then(r => r.data);
 
+
+
 //create note
-export const createNote = (content : string) : Promise<Note> => 
-  api.post('/notes', {content, type : 'text'} ).then(r => r.data);
+export const createNote = (
+  content: string,
+  title?: string
+): Promise<Note> =>
+  api.post('/notes', { content, title, type: 'text' }).then(r => r.data);
 
 //update note
 export const updateNote = (
@@ -147,3 +160,10 @@ export const updateReminder = (
 // Xóa nhắc nhở
 export const deleteReminder = (id: number): Promise<void> =>
   api.delete(`/reminders/${id}`).then(r => r.data);
+
+export const togglePin = (id: number): Promise<{ is_pinned: number }> =>
+  api.patch(`/notes/${id}/pin`).then(r => r.data);
+
+// Toggle lưu trữ
+export const toggleArchive = (id: number): Promise<{ is_archived: number }> =>
+  api.patch(`/notes/${id}/archive`).then(r => r.data);

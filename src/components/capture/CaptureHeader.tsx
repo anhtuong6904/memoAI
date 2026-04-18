@@ -1,78 +1,76 @@
+// src/components/capture/CaptureHeader.tsx
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { COLORS } from '@/src/constants/colors';
-import { CaptureHeaderProps } from '@/src/types';
-import { Ionicons } from '@expo/vector-icons';
+import {
+  View, Text, TouchableOpacity,
+  StyleSheet, ActivityIndicator,
+} from 'react-native';
+import { COLORS } from '../../constants/colors';
+
+interface CaptureHeaderProps {
+  title:         string;
+  subtitle:      string;
+  onActionPress: () => void;
+  isLoading?:    boolean;   // ✅ Thêm prop này
+}
 
 export default function CaptureHeader({
-  title,
-  subtitle,
-  onActionPress,
+  title, subtitle, onActionPress, isLoading = false,
 }: CaptureHeaderProps) {
   return (
     <View style={styles.header}>
-      {/* LEFT (empty để giữ layout cân đối) */}
       <View>
-        <Text style={styles.headerTitle}>{title}</Text>
-        {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
-      <View>
-
-      </View>
-      <View style = {styles.headerActions}>
       <TouchableOpacity
-        style={styles.savebutton}
+        style={[styles.btn, isLoading && styles.btnDisabled]}
         onPress={onActionPress}
-        activeOpacity={0.85}
+        disabled={isLoading}
+        activeOpacity={0.8}
       >
-        <Ionicons name="checkmark" size={24} color="#fff" />
+        {isLoading
+          ? <ActivityIndicator size="small" color="#fff" />
+          : <Text style={styles.btnText}>Lưu ✓</Text>
+        }
       </TouchableOpacity>
-      </View>
     </View>
   );
 }
+
 const styles = StyleSheet.create({
-  /* header */
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingTop: 8,
-      paddingBottom: 4,
-    },
-    headerTitle: {
-      fontSize: 28,
-      fontWeight: '800',
-      color: COLORS.text,
-      letterSpacing: -0.5,
-    },
-    headerSub: {
-      fontSize: 13,
-      color: COLORS.textMuted,
-      marginTop: 1,
-    },
-    headerActions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-    },
-    iconBtn: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
-      backgroundColor: COLORS.surface,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: COLORS.border,
-    },
-    savebutton: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: COLORS.accent,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+  header: {
+    flexDirection:     'row',
+    justifyContent:    'space-between',
+    alignItems:        'center',
+    paddingHorizontal: 16,
+    paddingVertical:   12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  title: {
+    fontSize:   18,
+    fontWeight: '700',
+    color:      COLORS.text,
+  },
+  subtitle: {
+    fontSize:  12,
+    color:     COLORS.textMuted,
+    marginTop: 2,
+  },
+  btn: {
+    backgroundColor:   COLORS.accent,
+    borderRadius:      20,
+    paddingHorizontal: 18,
+    paddingVertical:   8,
+    minWidth:          70,
+    alignItems:        'center',
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  btnText: {
+    color:      '#fff',
+    fontWeight: '700',
+    fontSize:   14,
+  },
 });

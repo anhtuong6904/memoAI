@@ -1,18 +1,13 @@
 import React, { useState, useCallback } from 'react';
 import {
   StyleSheet,
-  FlatList,
-  ListRenderItem,
-  RefreshControl,
   StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { COLORS } from '../constants/colors';
-import { FilterKey, Note, RootStackParamList, RootTabParamList } from '../types';
-import NoteCard from '../components/NoteCard';
-import EmptyState from '../components/EmptyState';
+import { FilterKey, RootStackParamList, RootTabParamList } from '../types';
 import { useNotes } from '../hooks/useNotes';
 import HomeHeader from '../components/home/HomeHeader';
 import { CompositeNavigationProp } from '@react-navigation/native';
