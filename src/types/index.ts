@@ -1,5 +1,3 @@
-import iconSet from '@expo/vector-icons/build/Fontisto';
-import Fontisto from '@expo/vector-icons/Fontisto';
 
 //khoi tao kieu du lieu Note
 export interface Note {
@@ -93,6 +91,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 //khoi tao params cho navigation
 export type RootStackParamList = {
   HomeList: undefined;
+  Capture: undefined;
   Detail: { noteId: number };
 }
 

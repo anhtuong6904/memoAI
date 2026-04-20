@@ -1,109 +1,190 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
-  StyleSheet,
-  StatusBar,
+  View, Text, StyleSheet,
+  FlatList, ListRenderItem, TouchableOpacity,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { SafeAreaView }        from 'react-native-safe-area-context';
+import { useNavigation }       from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { COLORS } from '../constants/colors';
-import { FilterKey, RootStackParamList, RootTabParamList } from '../types';
-import { useNotes } from '../hooks/useNotes';
-import HomeHeader from '../components/home/HomeHeader';
-import { CompositeNavigationProp } from '@react-navigation/native';
-import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import StatsRow from '../components/home/StatsRow';
-import SearchSection from '../components/home/SearchSection';
-import ErrorScreen from '../components/Error';
-import FilterBar from '../components/home/FilterBar';
-import NotesList from '../components/home/NotesList';
+import { BottomTabNavigationProp }   from '@react-navigation/bottom-tabs';
+import { CompositeNavigationProp }   from '@react-navigation/native';
 
-type NavProp = CompositeNavigationProp<
-  NativeStackNavigationProp<RootStackParamList, 'HomeList'>,
-  BottomTabNavigationProp<RootTabParamList>
->;
+import { COLORS } from '../constants/colors';
+import { Note, RootStackParamList } from '../types';
+import { useNotes } from '../hooks/useNotes';
+
+import NoteCard   from '../components/NoteCard';
+import EmptyState from '../components/EmptyState';
+import SearchBar  from '../components/SearchBar';
+
+type Nav = NativeStackNavigationProp<RootStackParamList, 'HomeList'>;
 
 export default function HomeScreen() {
-  const navigation  = useNavigation<NavProp>();
+  const navigation            = useNavigation<Nav>();
   const { notes, loading, error, reload, removeNote } = useNotes();
-  const [search, setSearch]       = useState('');
-  const [filter, setFilter]       = useState<FilterKey>('all');
-  const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch]   = useState('');
 
-  /* ── derived list ── */
-  const filtered = notes.filter(n => {
-    const matchType    = filter === 'all' || n.type === filter;
-    const query        = search.toLowerCase();
-    const matchSearch  = !query
-      || n.content.toLowerCase().includes(query)
-      || (n.summary ?? '').toLowerCase().includes(query);
-    return matchType && matchSearch;
-  });
+  // Lọc local theo từ khoá tìm kiếm
+  const filtered = notes.filter(n =>
+    n.content.toLowerCase().includes(search.toLowerCase()) ||
+    (n.summary ?? '').toLowerCase().includes(search.toLowerCase()),
+  );
 
-  /* ── handlers ── */
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await reload();
-    setRefreshing(false);
-  }, [reload]);
+  const renderItem: ListRenderItem<Note> = ({ item }) => (
+    <NoteCard
+      note={item}
+      onPress={() => navigation.navigate('Detail', { noteId: item.id })}
+      onDelete={() => removeNote(item.id)}
+      onHold={() => console.log('Hold:', item.id)}
+    />
+  );
 
-  /* ── error state ── */
+  /* ─── Trạng thái loading ─── */
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <Text style={styles.statusText}>Đang tải ghi chú…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  /* ─── Trạng thái lỗi ─── */
   if (error) {
     return (
       <SafeAreaView style={styles.container}>
-        <ErrorScreen
-          value={error}
-          onReload={reload}
-        />
+        <View style={styles.center}>
+          <Text style={styles.errorText}>⚠️ {error}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={reload}>
+            <Text style={styles.retryText}>Thử lại</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
+    <SafeAreaView style={styles.container}>
 
-      <HomeHeader 
-        total = {notes.length}
-        loading = {loading}
-        onAddPress = {() => navigation.navigate('Capture')}
-      />
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>Ghi chú</Text>
+          <Text style={styles.headerCount}>{notes.length} ghi chú</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => navigation.navigate('Capture')}
+        >
+          <Text style={styles.addButtonText}>＋</Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* ── Stats row ── */}
-      <StatsRow notes={notes} />
+      {/* Search bar */}
+      <View style={styles.searchWrapper}>
+        <SearchBar
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Tìm kiếm ghi chú..."
+        />
+      </View>
 
-      {/* {search section} */}
-      <SearchSection 
-        value={search}
-        onChange={setSearch}
-      />
-
-      {/* ── Filter chips ── */}
-      <FilterBar
-        filter={filter}
-        onChange={setFilter}
-      />
-
-      {/* ── Notes list ── */}
-      <NotesList
+      {/* Danh sách ghi chú */}
+      <FlatList<Note>
         data={filtered}
-        loading={loading}
-        refreshing={refreshing}
-        onRefresh={onRefresh}
-        onDelete={removeNote}
-        onPress={(note) => navigation.navigate('Detail', { noteId: note.id })} // ✅ fix luôn bug trước
-        search={search}
-        filter={filter}
+        keyExtractor={item => item.id.toString()}
+        renderItem={renderItem}
+        onRefresh={reload}
+        refreshing={loading}
+        ListEmptyComponent={
+          <EmptyState
+            message={search ? 'Không tìm thấy ghi chú' : 'Chưa có ghi chú nào'}
+            icon="📭"
+          />
+        }
+        contentContainerStyle={[
+          styles.listContent,
+          filtered.length === 0 && styles.listEmpty,
+        ]}
+        showsVerticalScrollIndicator={false}
       />
+
     </SafeAreaView>
   );
 }
-
-
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  statusText: {
+    color: COLORS.textMuted,
+    fontSize: 15,
+  },
+  errorText: {
+    color: COLORS.danger,
+    fontSize: 15,
+    textAlign: 'center',
+    paddingHorizontal: 24,
+  },
+  retryBtn: {
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  headerCount: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  addButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addButtonText: {
+    fontSize: 22,
+    color: '#FFFFFF',
+    lineHeight: 26,
+  },
+  searchWrapper: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  listContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+  },
+  listEmpty: {
+    flex: 1,
   },
 });

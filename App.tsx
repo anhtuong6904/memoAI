@@ -21,6 +21,7 @@ function HomeStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="HomeList" component={HomeScreen} />
       <Stack.Screen name="Detail"   component={DetailScreen} />
+      <Stack.Screen name="Capture"   component={CaptureScreen} />
     </Stack.Navigator>
   );
 }
@@ -59,16 +60,6 @@ function AppNavigator() {
             }}
           />
           <Tab.Screen
-            name="Capture"
-            component={CaptureScreen}
-            options={{
-              tabBarLabel: 'Ghi chú',
-              tabBarIcon: ({ color, size }) => (
-                <Ionicons name="add-circle-outline" size={size} color={color} />
-              ),
-            }}
-          />
-          <Tab.Screen
             name="Search"
             component={SearchScreen}
             options={{
@@ -78,16 +69,6 @@ function AppNavigator() {
               ),
             }}
           />
-          {/* <Tab.Screen
-            name="Detail"
-            component={DetailScreen}
-            // options={{
-            //   tabBarLabel: 'Tìm kiếm',
-            //   tabBarIcon: ({ color, size }) => (
-            //     <Ionicons name="search-outline" size={size} color={color} />
-            //   ),
-            // }}
-          /> */}
           <Tab.Screen
             name="Reminders"
             component={RemindersScreen}

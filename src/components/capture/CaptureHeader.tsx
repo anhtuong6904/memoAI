@@ -6,33 +6,15 @@ import {
 } from 'react-native';
 import { COLORS } from '../../constants/colors';
 
-interface CaptureHeaderProps {
-  title:         string;
-  subtitle:      string;
-  onActionPress: () => void;
-  isLoading?:    boolean;   // ✅ Thêm prop này
-}
+import { CaptureHeaderProps } from '@/src/types';
+
 
 export default function CaptureHeader({
-  title, subtitle, onActionPress, isLoading = false,
+  title, 
 }: CaptureHeaderProps) {
   return (
     <View style={styles.header}>
-      <View>
-        <Text style={styles.title}>{title}</Text>
-        <Text style={styles.subtitle}>{subtitle}</Text>
-      </View>
-      <TouchableOpacity
-        style={[styles.btn, isLoading && styles.btnDisabled]}
-        onPress={onActionPress}
-        disabled={isLoading}
-        activeOpacity={0.8}
-      >
-        {isLoading
-          ? <ActivityIndicator size="small" color="#fff" />
-          : <Text style={styles.btnText}>Lưu ✓</Text>
-        }
-      </TouchableOpacity>
+      <Text style={styles.title}>{title}</Text>
     </View>
   );
 }
@@ -45,7 +27,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical:   12,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
   },
   title: {
     fontSize:   18,
