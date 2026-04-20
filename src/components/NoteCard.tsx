@@ -71,7 +71,7 @@ export default function NoteCard({ note, onPress, onDelete }: NoteCardProps) {
 
       {/* ── Title (summary > first line of content) ── */}
       <Text style={styles.title} numberOfLines={2}>
-        {note.summary || note.content.split('\n')[0]}
+        {note.title}
       </Text>
 
       {/* ── Preview (content body, skip first line if summary exists) ── */}

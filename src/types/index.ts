@@ -91,8 +91,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 //khoi tao params cho navigation
 export type RootStackParamList = {
   HomeList: undefined;
-  Capture: undefined;
-  Detail: { noteId: number };
+  Edit: { noteId?: number };
 }
 
 export type RootTabParamList ={

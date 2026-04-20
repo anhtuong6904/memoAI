@@ -45,7 +45,7 @@ export const createNote = (
 //update note
 export const updateNote = (
   id : number,
-  data : Partial<Pick<Note, 'content'| 'summary' | 'tags'>>
+  data : Partial<Pick<Note, 'title'|'content'| 'summary' | 'tags'>>
 ) : Promise<Note> => 
   api.put(`/notes/${id}`, data).then(r => r.data);
   

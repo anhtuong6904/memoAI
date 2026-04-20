@@ -33,7 +33,7 @@ export default function HomeScreen() {
   const renderItem: ListRenderItem<Note> = ({ item }) => (
     <NoteCard
       note={item}
-      onPress={() => navigation.navigate('Detail', { noteId: item.id })}
+      onPress={() => navigation.navigate('Edit', { noteId: item.id })}
       onDelete={() => removeNote(item.id)}
       onHold={() => console.log('Hold:', item.id)}
     />
@@ -75,7 +75,7 @@ export default function HomeScreen() {
         </View>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => navigation.navigate('Capture')}
+          onPress={() => navigation.navigate('Edit',{ noteId: undefined })}
         >
           <Text style={styles.addButtonText}>＋</Text>
         </TouchableOpacity>

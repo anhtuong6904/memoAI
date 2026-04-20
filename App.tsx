@@ -7,8 +7,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import HomeScreen      from './src/screens/HomeScreen';
-import CaptureScreen   from './src/screens/CaptureScreen';
-import DetailScreen    from './src/screens/DetailScreen';
+import CaptureScreen   from './src/screens/EditScreen';
+import EditScreen    from './src/screens/EditScreen';
 import SearchScreen    from './src/screens/SearchScreen';
 import RemindersScreen from './src/screens/RemindersScreen';
 import { RootStackParamList, RootTabParamList } from './src/types';
@@ -20,8 +20,8 @@ function HomeStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="HomeList" component={HomeScreen} />
-      <Stack.Screen name="Detail"   component={DetailScreen} />
-      <Stack.Screen name="Capture"   component={CaptureScreen} />
+      {/* <Stack.Screen name="Detail"   component={DetailScreen} /> */}
+      <Stack.Screen name="Edit"   component={EditScreen} />
     </Stack.Navigator>
   );
 }
