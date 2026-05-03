@@ -10,12 +10,14 @@ web-build/
 
 # Env
 .env
-backend/.env
+ai_backend/.env
 
 # Uploads & Database
-backend/uploads/*
-!backend/uploads/.gitkeep
-backend/*.db
+ai_backend/_pycache_
+ai_backend/routes/_pycache_
+ai_backend/uploads/*
+!ai_backend/uploads/.gitkeep
+ai_backend/*.db
 
 # OS
 .DS_Store

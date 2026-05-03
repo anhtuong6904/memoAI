@@ -1,169 +1,298 @@
-import axios from 'axios';
-import { Note, Reminder } from '../types';
-import { API_URL, SERVER_URL } from '../constants/config';
+/**
+ * src/services/api.ts
+ * Toàn bộ API calls cho MemoAI
+ * Aligned với Python FastAPI backend (port 8000)
+ *
+ * Backend response format: { success: boolean, data: T, ... }
+ * Tất cả functions unwrap .data trước khi trả về
+ */
 
-//tao 1 axios dung chung 
-//baseURL: moi request deu bat dau tu API_URL
-//timeout: neu 30s khong co phan hoi => loi 
+import axios from "axios";
+import { SERVER_URL } from "../constants/config";
+import { Note, Reminder } from "../types";
+
+// ── Axios instance dùng chung ─────────────────────────────────────────────────
 const api = axios.create({
-  baseURL: API_URL, 
-  timeout: 30000,
+  baseURL: SERVER_URL,
+  timeout: 60000, // 60s — llava đọc ảnh cần thời gian
+  headers: { "Content-Type": "application/json" },
 });
 
-//notes
-//lay tat ca cac note
+// ── Interceptor: log lỗi ra console khi dev ───────────────────────────────────
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const msg = err.response?.data?.detail || err.message || "Unknown error";
+    console.error(`[API Error] ${err.config?.url}:`, msg);
+    return Promise.reject(new Error(msg));
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTES CRUD
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Lấy danh sách notes.
+ * Backend: GET /notes?tag=&type=&limit=&offset=
+ *
+ * @param tag    - lọc theo tag vd: "liên hệ"
+ * @param type   - lọc theo loại: 'text' | 'image' | 'voice' | 'video'
+ * @param limit  - số note tối đa (default 10)
+ * @param offset - bỏ qua bao nhiêu note (phân trang)
+ */
 export const getAllNotes = (options?: {
-  archived?: boolean;
-  pinned?:   boolean;
+  tag?: string;
+  type?: string;
+  limit?: number;
+  offset?: number;
 }): Promise<Note[]> => {
   const params = new URLSearchParams();
-  if (options?.archived) params.set('archived', '1');
-  if (options?.pinned)   params.set('pinned', '1');
-  return api.get(`/notes?${params.toString()}`).then(r => r.data);
+  if (options?.tag) params.set("tag", options.tag);
+  if (options?.type) params.set("type", options.type);
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.offset) params.set("offset", String(options.offset));
+
+  return api
+    .get(`/notes?${params.toString()}`)
+    .then((r) => r.data.data as Note[]); // unwrap { success, data: Note[] }
 };
 
+/**
+ * Lấy 1 note theo ID, kèm extracted_info.
+ * Backend: GET /notes/:id
+ * Trả về: { data: Note, extracted: ExtractedInfo | null }
+ */
+export const getNoteByID = (
+  id: number,
+): Promise<{
+  data: Note;
+  extracted: Record<string, any> | null;
+}> =>
+  api.get(`/notes/${id}`).then((r) => ({
+    data: r.data.data as Note,
+    extracted: r.data.extracted as Record<string, any> | null,
+  }));
 
-//lay note theo id
-export const getNoteByID = (id : number) : Promise<Note> =>
-  api.get(`/notes/${id}`).then(r => r.data);
+/**
+ * Tạo note mới (text thuần — không qua AI pipeline).
+ * Backend: POST /notes
+ * Dùng khi user gõ tay trong EditScreen.
+ */
+export const createNote = (content: string, title?: string): Promise<Note> =>
+  api
+    .post("/notes", { content, title, type: "text" })
+    .then((r) => r.data.data as Note);
 
-//search 
-// encodeURIComponent: mã hóa ký tự đặc biệt trong tiếng Việt
-// vd: "họp nhóm" → "h%E1%BB%8Dp%20nh%C3%B3m"
-export const searchNote = (q: string) : Promise<Note> =>
-  api.get(`/notes/search?q=${encodeURIComponent(q)}`).then(r => r.data);
-
-
-
-//create note
-export const createNote = (
-  content: string,
-  title?: string
-): Promise<Note> =>
-  api.post('/notes', { content, title, type: 'text' }).then(r => r.data);
-
-//update note
+/**
+ * Cập nhật note.
+ * Backend: PUT /notes/:id
+ * Chỉ gửi fields muốn thay đổi — backend tự bỏ qua fields null.
+ */
 export const updateNote = (
-  id : number,
-  data : Partial<Pick<Note, 'title'|'content'| 'summary' | 'tags'>>
-) : Promise<Note> => 
-  api.put(`/notes/${id}`, data).then(r => r.data);
-  
-//delete note
-export const deleteNote = (id: number) => 
-  api.delete(`/notes/${id}`).then(r => r.data);
+  id: number,
+  data: Partial<
+    Pick<
+      Note,
+      "title" | "content" | "summary" | "tags" | "is_pinned" | "is_archived"
+    >
+  >,
+): Promise<Note> =>
+  api.put(`/notes/${id}`, data).then((r) => r.data.data as Note);
 
-//upload file 
-//dung fetch thay vi axios vi axios khong xu li tot formdata + file tren react native
-//fetch hoat dong on dinh hon multipart/form-data
+/**
+ * Xóa note.
+ * Backend: DELETE /notes/:id
+ * ON DELETE CASCADE → tự xóa extracted_info, reminders, note_tags liên quan.
+ */
+export const deleteNote = (id: number): Promise<void> =>
+  api.delete(`/notes/${id}`).then(() => undefined);
 
-//helper dung chung: tao formdata va gui file len server
-//fieldName: ten field server expect ('image' | 'audio'| 'video')
-//fileUri: duong dan file tren thiet bi 
-//fileName: ten file
-//mimeType: loai file
-//endpoint: route tren server 
-const uploadFile = async (
-  fieldName: string,
-  fileUri: string,
-  fileName: string,
-  mimeType: string,
-  endpoint: string
-) : Promise<Note> => {
+/**
+ * Toggle ghim note lên đầu.
+ * Gọi updateNote với is_pinned đảo ngược.
+ */
+export const togglePin = async (note: Note): Promise<Note> =>
+  updateNote(note.id, { is_pinned: note.is_pinned === 1 ? 0 : 1 });
+
+/**
+ * Toggle lưu trữ note (ẩn khỏi danh sách chính).
+ */
+export const toggleArchive = async (note: Note): Promise<Note> =>
+  updateNote(note.id, { is_archived: note.is_archived === 1 ? 0 : 1 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAPTURE — AI Pipeline
+// Dùng fetch thay axios vì React Native xử lý FormData + file tốt hơn với fetch
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Helper nội bộ: gửi FormData lên backend.
+ * Không export — dùng qua captureImage / captureVoice / captureText.
+ */
+const postFormData = async (
+  endpoint: string,
+  formData: FormData,
+): Promise<any> => {
+  const response = await fetch(`${SERVER_URL}${endpoint}`, {
+    method: "POST",
+    body: formData,
+    // Không set Content-Type — fetch tự thêm boundary cho multipart/form-data
+  });
+
+  const json = await response.json();
+
+  if (!response.ok) {
+    throw new Error(json.detail || json.error || "Upload thất bại");
+  }
+
+  return json;
+};
+
+/**
+ * Capture text → AI pipeline.
+ * Backend: POST /capture/text
+ * mistral:7b trích xuất thông tin → tạo note mới + extracted_info.
+ *
+ * @param text     - nội dung text user nhập
+ * @param location - JSON string vị trí GPS (optional)
+ *                   vd: '{"lat":10.76,"lng":106.66,"address":"Quận 1"}'
+ */
+export const captureText = async (
+  text: string,
+  location?: string,
+): Promise<Note> => {
   const formData = new FormData();
+  formData.append("text", text);
+  if (location) formData.append("location", location);
 
-  // 'as any' cần thiết vì React Native FormData
-  // khác với Web FormData — TypeScript không nhận kiểu này mặc định
-  formData.append(fieldName, {
-    uri: fileUri,
+  const result = await postFormData("/capture/text", formData);
+  return result.data as Note;
+};
+
+/**
+ * Capture ảnh → AI pipeline.
+ * Backend: POST /capture/image
+ * llava:7b đọc ảnh → trích xuất text + thông tin → tạo note mới.
+ *
+ * @param imageUri - URI từ expo-image-picker vd: "file:///data/.../photo.jpg"
+ * @param location - JSON string vị trí GPS (optional)
+ *
+ * Trả về Note với file_url = "http://192.168.x.x:8000/uploads/images/xxx.jpg"
+ * → Dùng trực tiếp trong <Image source={{ uri: note.file_url }} />
+ */
+export const captureImage = async (
+  imageUri: string,
+  location?: string,
+): Promise<Note> => {
+  const formData = new FormData();
+  formData.append("file", {
+    uri: imageUri,
+    name: `photo-${Date.now()}.jpg`,
+    type: "image/jpeg",
+  } as any);
+  if (location) formData.append("location", location);
+
+  const result = await postFormData("/capture/image", formData);
+  return result.data as Note;
+};
+
+/**
+ * Capture giọng nói → AI pipeline.
+ * Backend: POST /capture/voice
+ * Whisper STT → transcript → mistral trích xuất → tạo note mới.
+ *
+ * @param audioUri - URI từ expo-av vd: "file:///data/.../recording.m4a"
+ * @param location - JSON string vị trí GPS (optional)
+ *
+ * Trả về Note với:
+ *   file_url   = "http://192.168.x.x:8000/uploads/audio/xxx.m4a"
+ *   transcript = "nội dung giọng nói đã nhận diện"
+ * → Phát lại audio: <Audio source={{ uri: note.file_url }} />
+ */
+export const captureVoice = async (
+  audioUri: string,
+  location?: string,
+): Promise<Note & { transcript: string }> => {
+  const isM4a = audioUri.toLowerCase().includes(".m4a");
+  const mimeType = isM4a ? "audio/x-m4a" : "audio/mp4";
+  const fileName = `voice-${Date.now()}.${isM4a ? "m4a" : "mp4"}`;
+
+  const formData = new FormData();
+  formData.append("file", {
+    uri: audioUri,
     name: fileName,
     type: mimeType,
   } as any);
+  if (location) formData.append("location", location);
 
-  const response = await fetch(`${SERVER_URL}${endpoint}`, {
-    method: 'POST',
-    body: formData,
-    headers:{'Content-Type' : 'multipart/form-data'},
-  })
-
-  if(!response.ok){
-    const error = await response.json();
-    throw new Error(error.error || 'Upload that bai');  
-  }
-
-  return response.json();
-}
-
-//upload image nhan uri tu expo-image-picker
-export const uploadImage = (imageUri: string) : Promise<Note> =>
-  uploadFile(
-    'image',
-    imageUri,
-    `photo-${Date.now()}.jpg`,
-    'image/jpeg',
-    '/api/notes/image'
-  );
-
-
-//upload audio 
-export const uploadAudio = (audioUri: string): Promise<Note> => {
-  // Tự động detect đuôi file và mime type
-  const isM4a     = audioUri.endsWith('.m4a') || audioUri.includes('.m4a');
-  const fileName  = `recording-${Date.now()}.${isM4a ? 'm4a' : 'mp4'}`;
-  const mimeType  = isM4a ? 'audio/x-m4a' : 'audio/mp4';
-
-  return uploadFile('audio', audioUri, fileName, mimeType, '/api/notes/audio');
+  const result = await postFormData("/capture/voice", formData);
+  return {
+    ...(result.data as Note),
+    transcript: result.transcript as string,
+  };
 };
 
-//upload video 
-export const uploadVideo = (videoUri: string): Promise<Note> =>
-  uploadFile(
-    'video',
-    videoUri,
-    `video-${Date.now()}.mp4`,
-    'video/mp4',
-    '/api/notes/video'
-  );
+// ─────────────────────────────────────────────────────────────────────────────
+// AI — Search & Chat
+// ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Tìm kiếm semantic — LLM hiểu ngữ nghĩa, không chỉ match keyword.
+ * Backend: POST /search
+ *
+ * Ví dụ:
+ *   "số điện thoại"     → tìm notes có contact info
+ *   "cuộc họp tuần tới" → tìm meeting notes
+ */
+export const searchNotes = (keyword: string): Promise<Note[]> =>
+  api.post("/search", { keyword }).then((r) => r.data.data as Note[]);
 
-// reminder 
-// Lấy tất cả nhắc nhở (kèm thông tin note gốc từ JOIN)
+/**
+ * Chat với AI về toàn bộ notes (Second Brain).
+ * Backend: POST /chat
+ *
+ * @param question - câu hỏi của user
+ * @param history  - lịch sử chat [{ role: 'user'|'assistant', content: '...' }]
+ *
+ * Ví dụ câu hỏi:
+ *   "Số điện thoại của anh Minh là gì?"
+ *   "Tôi có cuộc họp nào sắp tới không?"
+ *   "Tóm tắt những gì tôi đã ghi chú tuần này"
+ */
+export const chatWithAI = (
+  question: string,
+  history: { role: "user" | "assistant"; content: string }[] = [],
+): Promise<{ answer: string; question: string }> =>
+  api
+    .post("/chat", { question, history })
+    .then((r) => ({ answer: r.data.answer, question: r.data.question }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REMINDERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Lấy danh sách reminders chưa hoàn thành, sắp xếp theo thời gian gần nhất.
+ * Backend: GET /reminders
+ *
+ * Mỗi reminder kèm note_title từ JOIN với bảng notes.
+ */
 export const getAllReminders = (): Promise<Reminder[]> =>
-  api.get('/reminders').then(r => r.data);
+  api.get("/reminders").then((r) => r.data.data as Reminder[]);
 
-// Lấy nhắc nhở sắp tới (chưa xong, chưa qua thời hạn)
-export const getUpcomingReminders = (): Promise<Reminder[]> =>
-  api.get('/reminders/upcoming').then(r => r.data);
+/**
+ * Lấy tất cả reminders kể cả đã xong.
+ * Backend: GET /reminders?include_done=true
+ */
+export const getAllRemindersIncludeDone = (): Promise<Reminder[]> =>
+  api
+    .get("/reminders?include_done=true")
+    .then((r) => r.data.data as Reminder[]);
 
-//tao nhac nho moi 
-// noteId:   id của ghi chú liên quan (có thể không có)
-// title:    tiêu đề nhắc nhở vd: "Gọi cho anh Minh"
-// remindAt: ISO string vd: "2025-04-04T09:00:00.000Z"
-export const createReminder = (
-  noteId: number | null,
-  title: string,
-  remindAt: string
-): Promise<Reminder> =>
-  api.post('/reminders', { noteId, title, remindAt }).then(r => r.data);
-
-// Toggle trạng thái hoàn thành (done ↔ undone)
-export const markReminderDone = (id: number): Promise<Reminder> =>
-  api.put(`/reminders/${id}/done`).then(r => r.data);
-
-// Cập nhật thông tin nhắc nhở
-export const updateReminder = (
-  id: number,
-  data: Partial<Pick<Reminder, 'title' | 'remind_at'>>
-): Promise<Reminder> =>
-  api.put(`/reminders/${id}`, data).then(r => r.data);
-
-// Xóa nhắc nhở
-export const deleteReminder = (id: number): Promise<void> =>
-  api.delete(`/reminders/${id}`).then(r => r.data);
-
-export const togglePin = (id: number): Promise<{ is_pinned: number }> =>
-  api.patch(`/notes/${id}/pin`).then(r => r.data);
-
-// Toggle lưu trữ
-export const toggleArchive = (id: number): Promise<{ is_archived: number }> =>
-  api.patch(`/notes/${id}/archive`).then(r => r.data);
+/**
+ * Đánh dấu reminder là đã hoàn thành.
+ * Backend: PUT /reminders/:id/done
+ */
+export const markReminderDone = (id: number): Promise<void> =>
+  api.put(`/reminders/${id}/done`).then(() => undefined);

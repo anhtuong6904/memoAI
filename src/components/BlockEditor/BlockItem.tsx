@@ -1,5 +1,5 @@
 // src/components/BlockEditor/BlockItem.tsx
-import React, { useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, TextInputKeyPressEventData,
@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { Block } from '../../types';
 import { COLORS } from '../../constants/colors';
+import { Platform } from 'react-native';
 
 interface BlockItemProps {
   block:        Block;
@@ -29,6 +30,8 @@ const getTextStyle = (type: Block['type']) => {
     default:         return styles.bodyText;
   }
 };
+
+
 
 // Prefix hiển thị trước text
 const BlockPrefix = ({
@@ -78,6 +81,14 @@ export default function BlockItem({
     }
   };
 
+  useEffect(() => {
+    if (isFocused) {
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
+    }
+  }, [isFocused]);
+
   // Divider không có TextInput
   if (block.type === 'divider') {
     return (
@@ -90,7 +101,7 @@ export default function BlockItem({
   const hasPrefix = ['bullet','numbered','checkbox','quote'].includes(block.type);
 
   return (
-    <View style={[styles.row, isFocused && styles.rowFocused]}>
+    <View style={[styles.row]}>
       {/* Prefix: bullet, số, checkbox, quote line */}
       <BlockPrefix
         block={block}
@@ -119,6 +130,7 @@ export default function BlockItem({
         }
         placeholderTextColor={COLORS.textDim}
         multiline={block.type === 'text' || block.type === 'quote'}
+        scrollEnabled={false}
         blurOnSubmit={false}   // Enter không đóng keyboard
         returnKeyType="default"
       />
@@ -134,17 +146,18 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     minHeight: 36,
   },
-  rowFocused: {
-    backgroundColor: '#ffffff08',
-    borderRadius: 6,
-  },
 
   // TextInput
   input: {
     flex: 1,
     padding: 0,
     color: COLORS.text,
-    fontWeight: 700,
+    fontWeight: '700',
+
+    // ...(Platform.OS === 'web' && {
+    //   outlineStyle: 'none',
+    //   outlineWidth: 0,
+    // }),
   },
   inputWithPrefix: {
     marginLeft: 8,
