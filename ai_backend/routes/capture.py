@@ -378,18 +378,6 @@ async def capture_file(
 def reanalyze_note(note_id: int):
     """Re-run AI extraction using BOTH note content and attachment-derived text."""
     conn = get_connection()
-    if file_path:
-        exists = conn.execute(
-            "SELECT id FROM note_attachments WHERE note_id = ? AND file_path = ?",
-            [note_id, file_path],
-        ).fetchone()
-        if not exists:
-            conn.execute(
-                """INSERT INTO note_attachments (note_id, type, file_path, file_name, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                [note_id, note_type if note_type in ("image", "voice", "video", "file") else "file", file_path, os.path.basename(file_path), now],
-            )
-            conn.commit()
     note = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
     if not note:
         conn.close()

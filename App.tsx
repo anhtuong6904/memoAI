@@ -1,19 +1,21 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { StatusBar } from 'expo-status-bar';
-import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from "@expo/vector-icons";
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { StatusBar } from "expo-status-bar";
+import React from "react";
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
-import HomeScreen      from './src/screens/HomeScreen';
-import CaptureScreen   from './src/screens/EditScreen';
-import EditScreen    from './src/screens/EditScreen';
-import SearchScreen    from './src/screens/SearchScreen';
-import RemindersScreen from './src/screens/RemindersScreen';
-import { RootStackParamList, RootTabParamList } from './src/types';
+import EditScreen from "./src/screens/EditScreen";
+import HomeScreen from "./src/screens/HomeScreen";
+import RemindersScreen from "./src/screens/RemindersScreen";
+import SearchScreen from "./src/screens/SearchScreen";
+import { RootStackParamList, RootTabParamList } from "./src/types";
 
-const Tab   = createBottomTabNavigator<RootTabParamList>();
+const Tab = createBottomTabNavigator<RootTabParamList>();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function HomeStack() {
@@ -21,7 +23,7 @@ function HomeStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="HomeList" component={HomeScreen} />
       {/* <Stack.Screen name="Detail"   component={DetailScreen} /> */}
-      <Stack.Screen name="Edit"   component={EditScreen} />
+      <Stack.Screen name="Edit" component={EditScreen} />
     </Stack.Navigator>
   );
 }
@@ -38,14 +40,14 @@ function AppNavigator() {
           screenOptions={{
             headerShown: false,
             tabBarStyle: {
-              backgroundColor: '#0F0F0F',
-              borderTopColor:  '#1F2937',
-              paddingTop:      0,
-              paddingBottom:   insets.bottom + 6,
-              height:          62 + insets.bottom,
+              backgroundColor: "#0F0F0F",
+              borderTopColor: "#1F2937",
+              paddingTop: 0,
+              paddingBottom: insets.bottom + 6,
+              height: 62 + insets.bottom,
             },
-            tabBarActiveTintColor:   '#6C63FF',
-            tabBarInactiveTintColor: '#6B7280',
+            tabBarActiveTintColor: "#6C63FF",
+            tabBarInactiveTintColor: "#6B7280",
             tabBarLabelStyle: { fontSize: 11 },
           }}
         >
@@ -53,7 +55,7 @@ function AppNavigator() {
             name="Home"
             component={HomeStack}
             options={{
-              tabBarLabel: 'Trang chủ',
+              tabBarLabel: "Trang chủ",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="home-outline" size={size} color={color} />
               ),
@@ -63,7 +65,7 @@ function AppNavigator() {
             name="Search"
             component={SearchScreen}
             options={{
-              tabBarLabel: 'Tìm kiếm',
+              tabBarLabel: "Tìm kiếm",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="search-outline" size={size} color={color} />
               ),
@@ -73,9 +75,13 @@ function AppNavigator() {
             name="Reminders"
             component={RemindersScreen}
             options={{
-              tabBarLabel: 'Nhắc nhở',
+              tabBarLabel: "Nhắc nhở",
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="notifications-outline" size={size} color={color} />
+                <Ionicons
+                  name="notifications-outline"
+                  size={size}
+                  color={color}
+                />
               ),
             }}
           />

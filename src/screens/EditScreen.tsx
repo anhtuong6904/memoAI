@@ -1,16 +1,3 @@
-/**
- * screens/EditScreen.tsx  — v4
- *
- * Thêm:
- *  - Media blocks: image, audio, video, file (picker + insert vào editor)
- *  - Toolbar 2 tầng:
- *      Tầng 1 (format): H1 H2 H3 • 1. ☐ " — (scroll ngang)
- *      Tầng 2 (actions): 🖼️ 🎙️ 🎬 📎 | Lưu
- *  - Fix bug file_url: build từ SERVER_URL + '/' + note.file_path
- *  - blocksToText bỏ qua media blocks (không serialize ra markdown)
- *  - onDelete block handler
- */
-
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -42,151 +29,33 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import BlockItem from "../components/Editor/BlockItem";
+import EditTagRow from "../components/Editor/EditTagRow";
+import EditTopBar from "../components/Editor/EditTopbar";
 import SlashMenu from "../components/Editor/SlashMenu";
+import {
+  LIST_TYPES,
+  TOOLBAR_ITEMS,
+  blocksToText,
+  parseTags,
+  textToBlocks,
+  uid,
+} from "../components/Editor/helpers";
 import MarkdownViewer from "../components/MarkdownViewer";
 import { COLORS } from "../constants/colors";
 import { SERVER_URL } from "../constants/config";
 import { useNoteDetail } from "../hooks/useNotes";
 import {
+  captureFile,
+  captureImage,
+  captureVoice,
   createNote,
   deleteNote,
   reanalyzeNote,
-  updateNote
+  updateNote,
 } from "../services/api";
 import { Block, BlockType, RootStackParamList } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Edit">;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-let _uid = 0;
-const uid = () => `b_${Date.now()}_${_uid++}`;
-
-/** Chuyển text → blocks; gộp plain text liên tiếp thành 1 block */
-function textToBlocks(text: string): Block[] {
-  if (!text.trim()) return [{ id: uid(), type: "text", content: "" }];
-  const lines = text.split("\n");
-  const result: Block[] = [];
-  let pending: string[] = [];
-  const flush = () => {
-    if (!pending.length) return;
-    result.push({ id: uid(), type: "text", content: pending.join("\n") });
-    pending = [];
-  };
-  for (const line of lines) {
-    if (/^### /.test(line)) {
-      flush();
-      result.push({ id: uid(), type: "heading3", content: line.slice(4) });
-      continue;
-    }
-    if (/^## /.test(line)) {
-      flush();
-      result.push({ id: uid(), type: "heading2", content: line.slice(3) });
-      continue;
-    }
-    if (/^# /.test(line)) {
-      flush();
-      result.push({ id: uid(), type: "heading1", content: line.slice(2) });
-      continue;
-    }
-    if (/^- \[x\] /i.test(line)) {
-      flush();
-      result.push({
-        id: uid(),
-        type: "checkbox",
-        content: line.slice(6),
-        checked: true,
-      });
-      continue;
-    }
-    if (/^- \[ \] /.test(line)) {
-      flush();
-      result.push({
-        id: uid(),
-        type: "checkbox",
-        content: line.slice(6),
-        checked: false,
-      });
-      continue;
-    }
-    if (/^- /.test(line)) {
-      flush();
-      result.push({ id: uid(), type: "bullet", content: line.slice(2) });
-      continue;
-    }
-    if (/^\d+\. /.test(line)) {
-      flush();
-      const m = line.match(/^\d+\. (.*)/);
-      result.push({ id: uid(), type: "numbered", content: m ? m[1] : line });
-      continue;
-    }
-    if (/^> /.test(line)) {
-      flush();
-      result.push({ id: uid(), type: "quote", content: line.slice(2) });
-      continue;
-    }
-    if (/^---$/.test(line.trim())) {
-      flush();
-      result.push({ id: uid(), type: "divider", content: "" });
-      continue;
-    }
-    pending.push(line);
-  }
-  flush();
-  return result.length ? result : [{ id: uid(), type: "text", content: "" }];
-}
-
-/**
- * Chuyển blocks → markdown text.
- * Media blocks (image/audio/video/file) KHÔNG serialize ra text —
- * chúng chỉ tồn tại trong editor, được lưu qua API capture riêng.
- */
-function blocksToText(blocks: Block[]): string {
-  return blocks
-    .filter((b) => !["image", "audio", "video", "file"].includes(b.type))
-    .map((b) => {
-      switch (b.type) {
-        case "heading1":
-          return `# ${b.content}`;
-        case "heading2":
-          return `## ${b.content}`;
-        case "heading3":
-          return `### ${b.content}`;
-        case "bullet":
-          return `- ${b.content}`;
-        case "numbered":
-          return `1. ${b.content}`;
-        case "checkbox":
-          return b.checked ? `- [x] ${b.content}` : `- [ ] ${b.content}`;
-        case "quote":
-          return `> ${b.content}`;
-        case "divider":
-          return "---";
-        default:
-          return b.content;
-      }
-    })
-    .join("\n");
-}
-
-const parseTags = (raw: string): string[] => {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-};
-
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleString("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 
 /** ✅ Fix: build full URL từ relative file_path */
 const buildFileUrl = (filePath?: string): string | undefined => {
@@ -195,20 +64,6 @@ const buildFileUrl = (filePath?: string): string | undefined => {
   const normalized = filePath.replace(/\\/g, "/");
   return `${SERVER_URL}/${normalized}`;
 };
-
-const LIST_TYPES: BlockType[] = ["bullet", "numbered", "checkbox"];
-
-// Format toolbar (tầng 1)
-const FORMAT_ITEMS: { id: BlockType | "divider"; label: string }[] = [
-  { id: "heading1", label: "H1" },
-  { id: "heading2", label: "H2" },
-  { id: "heading3", label: "H3" },
-  { id: "bullet", label: "•" },
-  { id: "numbered", label: "1." },
-  { id: "checkbox", label: "☐" },
-  { id: "quote", label: '"' },
-  { id: "divider", label: "—" },
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EditScreen
@@ -327,6 +182,35 @@ export default function EditScreen({ route, navigation }: Props) {
 
   // ── Save ───────────────────────────────────────────────────────────────────
 
+  const uploadMediaBlocks = useCallback(
+    async (targetNoteId: number) => {
+      const mediaBlocks = blocks.filter(
+        (b) => ["image", "audio", "video", "file"].includes(b.type) && !!b.uri,
+      );
+      for (const block of mediaBlocks) {
+        if (!block.uri) continue;
+        if (block.type === "image") {
+          await captureImage(block.uri, undefined, targetNoteId);
+          continue;
+        }
+        if (block.type === "audio") {
+          await captureVoice(block.uri, undefined, targetNoteId);
+          continue;
+        }
+        await captureFile(
+          block.uri,
+          block.fileName ??
+            `${block.type}-${Date.now()}.${block.type === "video" ? "mp4" : "bin"}`,
+          block.mimeType ??
+            (block.type === "video" ? "video/mp4" : "application/octet-stream"),
+          undefined,
+          targetNoteId,
+        );
+      }
+    },
+    [blocks],
+  );
+
   const doSave = useCallback(
     async (showSpinner: boolean) => {
       const content = (isEditing ? blocksToText(blocks) : rawMarkdown).trim();
@@ -335,6 +219,7 @@ export default function EditScreen({ route, navigation }: Props) {
         if (showSpinner) setSaving(true);
         if (isNew) {
           const newNote = await createNote(content || " ", title || "");
+          await uploadMediaBlocks(newNote.id);
           isDirty.current = false;
           flashSaved();
           navigation.replace("Edit", { noteId: newNote.id });
@@ -344,10 +229,12 @@ export default function EditScreen({ route, navigation }: Props) {
             content: content || " ",
             tags: JSON.stringify(tags),
           });
+          await uploadMediaBlocks(note.id);
           setRawMarkdown(content || " ");
           isDirty.current = false;
           flashSaved();
           setIsEditing(false);
+          reloadNote();
         }
       } catch (e) {
         if (showSpinner)
@@ -356,7 +243,17 @@ export default function EditScreen({ route, navigation }: Props) {
         if (showSpinner) setSaving(false);
       }
     },
-    [blocks, isEditing, isNew, note, rawMarkdown, tags, title],
+    [
+      blocks,
+      isEditing,
+      isNew,
+      note,
+      rawMarkdown,
+      reloadNote,
+      tags,
+      title,
+      uploadMediaBlocks,
+    ],
   );
 
   // ── Checkbox toggle (view mode) ────────────────────────────────────────────
@@ -707,75 +604,21 @@ export default function EditScreen({ route, navigation }: Props) {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        {/* ── TOP BAR ──────────────────────────────────────────────────────── */}
-        <View style={s.topBar}>
-          <TouchableOpacity
-            style={s.backBtn}
-            onPress={() => navigation.goBack()}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="chevron-back" size={24} color={COLORS.accent} />
-            <Text style={s.backLabel}>Ghi chú</Text>
-            <Animated.View style={[s.unsavedDot, { opacity: unsavedDot }]} />
-          </TouchableOpacity>
-
-          <View style={s.topCenter} pointerEvents="none">
-            {saving ? (
-              <ActivityIndicator size="small" color={COLORS.textDim} />
-            ) : (
-              <>
-                <Animated.Text
-                  style={[s.savedBadge, { opacity: savedOpacity }]}
-                >
-                  ✓ Đã lưu
-                </Animated.Text>
-                <Text style={s.dateText}>
-                  {note ? fmtDate(note.updated_at) : "Ghi chú mới"}
-                </Text>
-              </>
-            )}
-          </View>
-
-          <View style={s.topRight}>
-            {extracted && (
-              <TouchableOpacity
-                style={s.topBtn}
-                onPress={() => setShowExtracted((v) => !v)}
-              >
-                <Ionicons
-                  name="sparkles-outline"
-                  size={19}
-                  color={showExtracted ? COLORS.accent : COLORS.textMuted}
-                />
-              </TouchableOpacity>
-            )}
-            {!isNew && (
-              <TouchableOpacity
-                style={s.topBtn}
-                onPress={handleAnalyze}
-                disabled={analyzing}
-              >
-                {analyzing ? (
-                  <ActivityIndicator size="small" color={COLORS.accent} />
-                ) : (
-                  <Ionicons name="sparkles" size={19} color={COLORS.accent} />
-                )}
-              </TouchableOpacity>
-            )}
-            {!isNew && (
-              <TouchableOpacity style={s.topBtn} onPress={handleShare}>
-                <Ionicons
-                  name="share-outline"
-                  size={19}
-                  color={COLORS.textMuted}
-                />
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={s.topBtn} onPress={handleDelete}>
-              <Ionicons name="trash-outline" size={19} color={COLORS.danger} />
-            </TouchableOpacity>
-          </View>
-        </View>
+        <EditTopBar
+          isNew={isNew}
+          saving={saving}
+          analyzing={analyzing}
+          showExtracted={showExtracted}
+          hasExtracted={!!extracted}
+          updatedAt={note?.updated_at}
+          savedOpacity={savedOpacity}
+          unsavedDot={unsavedDot}
+          onBack={() => navigation.goBack()}
+          onToggleExtracted={() => setShowExtracted((v) => !v)}
+          onAnalyze={handleAnalyze}
+          onShare={handleShare}
+          onDelete={handleDelete}
+        />
 
         {/* ── CONTENT ──────────────────────────────────────────────────────── */}
         {isEditing ? (
@@ -804,48 +647,15 @@ export default function EditScreen({ route, navigation }: Props) {
               />
 
               {/* Tags */}
-              <View style={s.tagsRow}>
-                {tags.map((t) => (
-                  <TouchableOpacity
-                    key={t}
-                    style={s.tagChip}
-                    onPress={() => removeTag(t)}
-                  >
-                    <Text style={s.tagChipText}>#{t}</Text>
-                    <Text style={s.tagChipX}> ✕</Text>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  style={s.tagAddBtn}
-                  onPress={() => setShowTagInput((v) => !v)}
-                >
-                  <Ionicons
-                    name="pricetag-outline"
-                    size={11}
-                    color={COLORS.textDim}
-                  />
-                  <Text style={s.tagAddText}>tag</Text>
-                </TouchableOpacity>
-              </View>
-
-              {showTagInput && (
-                <View style={s.tagInputRow}>
-                  <TextInput
-                    style={s.tagField}
-                    value={tagInput}
-                    onChangeText={setTagInput}
-                    placeholder="#tên-tag"
-                    placeholderTextColor={COLORS.textDim}
-                    onSubmitEditing={addTag}
-                    returnKeyType="done"
-                    autoCapitalize="none"
-                    autoFocus
-                  />
-                  <TouchableOpacity style={s.tagConfirmBtn} onPress={addTag}>
-                    <Text style={s.tagConfirmText}>Thêm</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+              <EditTagRow
+                tags={tags}
+                tagInput={tagInput}
+                showTagInput={showTagInput}
+                setTagInput={setTagInput}
+                setShowTagInput={setShowTagInput}
+                onAddTag={addTag}
+                onRemoveTag={removeTag}
+              />
 
               <View style={s.hairline} />
 
@@ -894,7 +704,10 @@ export default function EditScreen({ route, navigation }: Props) {
               // ✅ Fix: build URL từ file_path, không dùng file_url
               mediaUrl={buildFileUrl(note?.file_path)}
               mediaType={note?.type}
-              attachments={(note?.attachments ?? []).map((a) => ({ ...a, file_path: buildFileUrl(a.file_path) || a.file_path }))}
+              attachments={(note?.attachments ?? []).map((a) => ({
+                ...a,
+                file_path: buildFileUrl(a.file_path) || a.file_path,
+              }))}
               onPress={() => setIsEditing(true)}
               onLinkPress={(url) => Linking.openURL(url).catch(() => {})}
               onCheckboxToggle={handleCheckboxToggle}
@@ -915,7 +728,7 @@ export default function EditScreen({ route, navigation }: Props) {
                 contentContainerStyle={s.toolRow1Items}
                 keyboardShouldPersistTaps="always"
               >
-                {FORMAT_ITEMS.map((item) => {
+                {TOOLBAR_ITEMS.map((item) => {
                   const active = focusedBlock?.type === item.id;
                   return (
                     <TouchableOpacity

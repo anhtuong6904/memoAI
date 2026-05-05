@@ -7,9 +7,8 @@
     "icon": "./assets/images/icon.png",
     "scheme": "memoai",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
-      "jsEngine": "jsc"
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +17,6 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -47,6 +45,6 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "jsEngine": "hermes"
+    
   }
 }

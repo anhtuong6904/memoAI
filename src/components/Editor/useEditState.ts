@@ -4,6 +4,9 @@ import { Alert, Animated } from "react-native";
 
 import { useNoteDetail } from "../../hooks/useNotes";
 import {
+  captureFile,
+  captureImage,
+  captureVoice,
   createNote,
   deleteNote,
   reanalyzeNote,
@@ -124,9 +127,38 @@ export function useEditState({
       const content = (isEditing ? blocksToText(blocks) : rawMarkdown).trim();
       if (!title.trim() && !content) return;
       try {
+        const uploadMediaBlocks = async (targetNoteId: number) => {
+          const mediaBlocks = blocks.filter(
+            (b) =>
+              ["image", "audio", "video", "file"].includes(b.type) && !!b.uri,
+          );
+          for (const block of mediaBlocks) {
+            if (!block.uri) continue;
+            if (block.type === "image") {
+              await captureImage(block.uri, undefined, targetNoteId);
+              continue;
+            }
+            if (block.type === "audio") {
+              await captureVoice(block.uri, undefined, targetNoteId);
+              continue;
+            }
+            await captureFile(
+              block.uri,
+              block.fileName ??
+                `${block.type}-${Date.now()}.${block.type === "video" ? "mp4" : "bin"}`,
+              block.mimeType ??
+                (block.type === "video"
+                  ? "video/mp4"
+                  : "application/octet-stream"),
+              undefined,
+              targetNoteId,
+            );
+          }
+        };
         if (showSpinner) setSaving(true);
         if (isNew) {
           const newNote = await createNote(content || " ", title || "");
+          await uploadMediaBlocks(newNote.id);
           isDirty.current = false;
           flashSaved();
           onNavigateReplace(newNote.id);
@@ -136,9 +168,11 @@ export function useEditState({
             content: content || " ",
             tags: JSON.stringify(tags),
           });
+          await uploadMediaBlocks(note.id);
           setRawMarkdown(content || " ");
           isDirty.current = false;
           flashSaved();
+          reloadNote();
         }
       } catch (e) {
         if (showSpinner)
@@ -147,7 +181,17 @@ export function useEditState({
         if (showSpinner) setSaving(false);
       }
     },
-    [blocks, isEditing, isNew, note, rawMarkdown, tags, title],
+    [
+      blocks,
+      isEditing,
+      isNew,
+      note,
+      onNavigateReplace,
+      rawMarkdown,
+      reloadNote,
+      tags,
+      title,
+    ],
   );
 
   // ── Delete ──────────────────────────────────────────────────────────────────
