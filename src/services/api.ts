@@ -1,12 +1,3 @@
-/**
- * src/services/api.ts
- * Toàn bộ API calls cho MemoAI
- * Aligned với Python FastAPI backend (port 8000)
- *
- * Backend response format: { success: boolean, data: T, ... }
- * Tất cả functions unwrap .data trước khi trả về
- */
-
 import axios from "axios";
 import { SERVER_URL } from "../constants/config";
 import { Note, Reminder } from "../types";

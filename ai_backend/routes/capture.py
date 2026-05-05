@@ -11,6 +11,15 @@ from services.ollama import extract_from_text, extract_from_image
 
 router = APIRouter()
 
+def _build_context(note_type: str, file_path: Optional[str], location: Optional[str], extra: dict | None = None) -> dict:
+    return {
+        "note_type": note_type,
+        "file_path": file_path,
+        "location": location,
+        **(extra or {}),
+    }
+
+
 
 # ── Helper: Lưu hoặc UPDATE note + extracted_info vào DB ─────────────────────
 
@@ -154,8 +163,12 @@ async def capture_text(
     note_id:  Optional[int] = Form(None),   
     location: Optional[str] = Form(None),
 ):
-    try:
-        extracted = extract_from_text(text)
+    
+    try:        
+        extracted = extract_from_text(
+            text,
+            context=_build_context("text", None, location),
+        )
         note      = save_or_update_db(
             content=text,
             note_type="text",
@@ -191,16 +204,25 @@ async def capture_image(
 
         extracted = extract_from_image(image_b64)
         content   = extracted.get("extracted_text") or extracted.get("summary") or ""
-
+        combined_input = f"{content}\n\n[Image filename: {file.filename}]"
+        final_extracted = extract_from_text(
+            combined_input,
+            context=_build_context(
+                "image",
+                file_path,
+                location,
+                extra={"image_extracted": extracted}
+            ),
+        )
         note = save_or_update_db(
             content=content,
             note_type="image",
-            extracted=extracted,
+            extracted=final_extracted,
             note_id=note_id,
             file_path=file_path,
             location=location,
         )
-        return {"success": True, "data": note, "extracted": extracted}
+        return {"success": True, "data": note, "extracted": final_extracted}
     except HTTPException:
         raise
     except Exception as e:
@@ -216,17 +238,30 @@ async def capture_voice(
     try:
         from services.whisper import transcribe_audio
 
+        # Bước 1: Lưu file audio + Whisper STT
         audio_bytes = await file.read()
+        
+        import os
+        os.makedirs("uploads/audio", exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = file.filename or "voice.m4a"
+        audio_path = f"uploads/audio/{timestamp}_{safe_name}"
+        with open(audio_path, "wb") as f:
+            f.write(audio_bytes)
+            
         transcript  = transcribe_audio(audio_bytes, file.filename)
-
         if not transcript.strip():
             raise HTTPException(status_code=400, detail="Không nhận diện được giọng nói")
 
-        extracted = extract_from_text(transcript)
+        extracted = extract_from_text(
+            transcript,
+            context=_build_context("voice", None, location),
+        )
         note      = save_or_update_db(
             content=transcript,
             note_type="voice",
             extracted=extracted,
+            file_path=audio_path,
             note_id=note_id,
             location=location,
         )
@@ -239,4 +274,79 @@ async def capture_voice(
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reanalyze/{note_id}")
+def reanalyze_note(note_id: int):
+    """Re-run AI extraction using BOTH note content and attachment-derived text."""
+    conn = get_connection()
+    note = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
+    if not note:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Note không tồn tại")
+
+    note = dict(note)
+    attachment_text = ""
+
+    try:
+        if note.get("type") == "image" and note.get("file_path"):
+            with open(note["file_path"], "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode("utf-8")
+            image_extracted = extract_from_image(image_b64)
+            attachment_text = image_extracted.get("extracted_text") or image_extracted.get("summary") or ""
+
+        elif note.get("type") == "voice" and note.get("file_path"):
+            from services.whisper import transcribe_audio
+            with open(note["file_path"], "rb") as f:
+                audio_bytes = f.read()
+            attachment_text = transcribe_audio(audio_bytes, note["file_path"])
+
+        combined_text = (note.get("content") or "").strip()
+        if attachment_text.strip():
+            combined_text += f"\n\n[Attachment extracted]\n{attachment_text.strip()}"
+
+        extracted = extract_from_text(
+            combined_text or " ",
+            context=_build_context(
+                note.get("type") or "text",
+                note.get("file_path"),
+                note.get("location"),
+                extra={"note_id": note_id},
+            ),
+        )
+
+        now = datetime.now().isoformat()
+        action_items = json.dumps(extracted.get("action_items", []), ensure_ascii=False)
+        conn.execute(
+            """UPDATE notes SET title=?, summary=?, tags=?, ai_processed=1, updated_at=? WHERE id=?""",
+            [
+                extracted.get("title") or note.get("title"),
+                extracted.get("summary"),
+                json.dumps(extracted.get("tags", []), ensure_ascii=False),
+                now,
+                note_id,
+            ],
+        )
+        conn.execute("DELETE FROM extracted_info WHERE note_id = ?", [note_id])
+        conn.execute(
+            """INSERT INTO extracted_info
+               (note_id, person_name, phone, email, organization,
+                place_name, address, event_title, event_time, deadline,
+                category, action_items, reminder_needed, raw_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                note_id,
+                extracted.get("person_name"), extracted.get("phone"), extracted.get("email"), extracted.get("organization"),
+                extracted.get("place_name"), extracted.get("address"), extracted.get("event_title"), extracted.get("event_time"),
+                extracted.get("deadline"), extracted.get("category", "note"), action_items,
+                1 if extracted.get("reminder_needed") else 0, json.dumps(extracted, ensure_ascii=False), now,
+            ],
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
+        conn.close()
+        return {"success": True, "data": dict(updated), "extracted": extracted, "combined_text": combined_text}
+    except Exception as e:
+        conn.close()
         raise HTTPException(status_code=500, detail=str(e))

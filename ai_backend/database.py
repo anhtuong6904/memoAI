@@ -164,10 +164,34 @@ def init_db() -> None:
     -- một note có nhiều attachment
     -- ══════════════════════════════════════════════════════════════════ 
 
-    CREATE TABLE IF NOT EXISTS note_attachment(
-        note_id INTEGER NOT NULL,
-        
-    )
+    CREATE TABLE IF NOT EXISTS note_attachments (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id       INTEGER NOT NULL,
+ 
+        -- Loại: 'image' | 'audio' | 'video' | 'file'
+        type          TEXT    NOT NULL DEFAULT 'file',
+ 
+        -- Đường dẫn tương đối trên server, vd: "uploads/images/xxx.jpg"
+        file_path     TEXT    NOT NULL,
+ 
+        -- Metadata
+        file_name     TEXT,                  -- tên file gốc từ client
+        mime_type     TEXT,                  -- "image/jpeg", "audio/x-m4a"...
+        file_size     INTEGER,               -- bytes
+        duration      INTEGER,               -- ms — chỉ dùng cho audio/video
+        width         INTEGER,               -- px — chỉ dùng cho image/video
+        height        INTEGER,               -- px — chỉ dùng cho image/video
+ 
+        -- Caption / ghi chú kèm attachment (vd: chú thích ảnh)
+        caption       TEXT    DEFAULT '',
+ 
+        -- Thứ tự hiển thị trong note (để giữ đúng vị trí block)
+        display_order INTEGER NOT NULL DEFAULT 0,
+ 
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+ 
+        FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+    );
 
     -- ══════════════════════════════════════════════════════════════════
     -- INDEX — tăng tốc các truy vấn thường dùng
