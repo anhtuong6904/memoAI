@@ -2,12 +2,28 @@
 
 // ── Note ──────────────────────────────────────────────────────────────────────
 
+export interface NoteAttachment {
+  id: number;
+  note_id: number;
+  type: "image" | "voice" | "video" | "file";
+  file_path: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  caption?: string;
+  display_order?: number;
+  created_at: string;
+}
+
 export interface Note {
   id: number;
   title?: string;
   content: string;
   summary?: string;
-  type: "text" | "image" | "voice" | "video";
+  type: "text" | "image" | "voice" | "video" | "file";
   file_path?: string; // relative: "uploads/images/xxx.jpg"
   tags: string; // JSON string
   source_url?: string;
@@ -17,6 +33,7 @@ export interface Note {
   ai_processed: number;
   created_at: string;
   updated_at: string;
+  attachments?: NoteAttachment[];
 }
 
 // ── Reminder ──────────────────────────────────────────────────────────────────
@@ -171,6 +188,7 @@ export const FILTER_TYPES = [
   { key: "image", label: "Ảnh" },
   { key: "voice", label: "Giọng nói" },
   { key: "video", label: "Video" },
+  { key: "file", label: "File" },
 ] as const;
 
 export type FilterKey = (typeof FILTER_TYPES)[number]["key"];

@@ -205,6 +205,39 @@ export const captureVoice = async (
     transcript: result.transcript as string,
   };
 };
+
+export const captureFile = async (
+  fileUri: string,
+  fileName: string,
+  mimeType: string = "application/octet-stream",
+  location?: string,
+  noteId?: number,
+): Promise<Note> => {
+  const formData = new FormData();
+  formData.append("file", {
+    uri: fileUri,
+    name: fileName,
+    type: mimeType,
+  } as any);
+  if (location) formData.append("location", location);
+  if (noteId) formData.append("note_id", String(noteId));
+
+  const result = await postFormData("/capture/file", formData);
+  return result.data as Note;
+};
+
+export const reanalyzeNote = (
+  noteId: number,
+): Promise<{
+  data: Note;
+  extracted: Record<string, any>;
+  combined_text?: string;
+}> =>
+  api.post(`/capture/reanalyze/${noteId}`).then((r) => ({
+    data: r.data.data as Note,
+    extracted: r.data.extracted as Record<string, any>,
+    combined_text: r.data.combined_text as string | undefined,
+  }));
 // ─────────────────────────────────────────────────────────────────────────────
 // AI — Search & Chat
 // ─────────────────────────────────────────────────────────────────────────────

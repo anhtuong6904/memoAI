@@ -75,15 +75,17 @@ def _schema(model_cls: type[BaseModel]) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _EXTRACT_SYSTEM = """\
-Bạn là module trích xuất thông tin cho ứng dụng ghi chú MemoAI.
-Nhiệm vụ: đọc text đầu vào, trả về JSON theo schema đã định.
+Bạn là memory parser cho MemoAI (Second Brain).
+Mục tiêu: biến mọi capture thành tri thức dễ tìm lại.
 
 Quy tắc bắt buộc:
-- Chỉ trả về JSON, không thêm bất kỳ text nào khác.
-- Nếu không tìm thấy giá trị cho một field → dùng null (string/object) hoặc [] (array).
-- summary và tags LUÔN bằng tiếng Việt.
-- event_time và deadline phải là chuỗi ISO 8601 hoặc null.
-- category phải là một trong: contact | meeting | shopping | location | reminder | note
+- Chỉ trả về JSON, không thêm text ngoài schema.
+- Ưu tiên khả năng truy hồi: title rõ ngữ cảnh, summary nêu ý chính + hành động.
+- Nếu thiếu dữ liệu: dùng null hoặc [] theo kiểu field.
+- summary và tags LUÔN bằng tiếng Việt, dễ tìm kiếm về sau.
+- event_time/deadline phải là ISO 8601 hoặc null.
+- category ∈ {contact, meeting, shopping, location, reminder, note}.
+- Nếu input có nhiều nguồn (text + attachment), hãy hợp nhất thành một ngữ cảnh duy nhất, không bỏ sót chi tiết quan trọng.
 
 Ví dụ:
 Input: "Gặp anh Minh Nguyễn CEO Techviet số 0912345678 lúc 3h chiều thứ 6 tại văn phòng Q1"
@@ -131,14 +133,15 @@ Quy tắc:
 """
 
 _CHAT_SYSTEM = """\
-Bạn là trợ lý AI cho ứng dụng ghi chú MemoAI, đóng vai "Second Brain" của người dùng.
-Nhiệm vụ: trả lời câu hỏi dựa trên nội dung các ghi chú được cung cấp.
+Bạn là trợ lý Second Brain của người dùng.
+Nguyên tắc: capture không ma sát, retrieval cực nhanh.
 
 Quy tắc:
-- Luôn trả lời bằng tiếng Việt trừ khi người dùng hỏi bằng ngôn ngữ khác.
-- Chỉ sử dụng thông tin từ các ghi chú được cung cấp.
-- Nếu không tìm thấy thông tin trong ghi chú → nói rõ: "Tôi không tìm thấy thông tin này trong ghi chú của bạn."
-- Trả lời ngắn gọn, súc tích, không lan man.\
+- Luôn trả lời bằng tiếng Việt (trừ khi người dùng dùng ngôn ngữ khác).
+- Chỉ dựa trên dữ liệu ghi chú đã cung cấp.
+- Ưu tiên câu trả lời có thể hành động: tóm tắt ngắn + các mốc thời gian/việc cần làm.
+- Khi phù hợp, trích ID note nguồn dạng [#id] để người dùng mở lại ngữ cảnh.
+- Nếu thiếu thông tin, nói rõ: "Tôi không tìm thấy thông tin này trong ghi chú của bạn."\
 """
 
 
@@ -217,7 +220,7 @@ def call_chat(
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_from_text(text: str) -> dict:
+def extract_from_text(text: str, context: Optional[dict] = None) -> dict:
     """
     Dùng mistral:7b + JSON Schema để trích xuất thông tin có cấu trúc từ text.
 
@@ -232,7 +235,7 @@ def extract_from_text(text: str) -> dict:
     raw = call_chat(
         model       = "mistral:7b",
         system      = _EXTRACT_SYSTEM,
-        user        = f"Trích xuất thông tin từ text sau:\n\n{text}",
+        user        = ((f"Ngữ cảnh bổ sung: {json.dumps(context, ensure_ascii=False)}\n\n") if context else "") + f"Trích xuất thông tin từ text sau:\n\n{text}",
         schema      = _schema(ExtractedNote),
         temperature = 0.0,   # tối đa nhất quán
         num_predict = 1024,

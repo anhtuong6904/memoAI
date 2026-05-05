@@ -4,9 +4,9 @@ import { Alert, Animated } from "react-native";
 
 import { useNoteDetail } from "../../hooks/useNotes";
 import {
-  captureText,
   createNote,
   deleteNote,
+  reanalyzeNote,
   updateNote,
 } from "../../services/api";
 import { Block, BlockType } from "../../types";
@@ -139,7 +139,6 @@ export function useEditState({
           setRawMarkdown(content || " ");
           isDirty.current = false;
           flashSaved();
-
         }
       } catch (e) {
         if (showSpinner)
@@ -177,7 +176,7 @@ export function useEditState({
     if (!note) return;
     setAnalyzing(true);
     try {
-      await captureText(rawMarkdown.trim());
+      await reanalyzeNote(note.id);
       await reloadNote();
       setShowExtracted(true);
     } catch {

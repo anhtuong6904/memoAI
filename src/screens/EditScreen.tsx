@@ -48,10 +48,10 @@ import { COLORS } from "../constants/colors";
 import { SERVER_URL } from "../constants/config";
 import { useNoteDetail } from "../hooks/useNotes";
 import {
-  captureText,
   createNote,
   deleteNote,
-  updateNote,
+  reanalyzeNote,
+  updateNote
 } from "../services/api";
 import { Block, BlockType, RootStackParamList } from "../types";
 
@@ -398,7 +398,7 @@ export default function EditScreen({ route, navigation }: Props) {
     if (!note) return;
     setAnalyzing(true);
     try {
-      await captureText(rawMarkdown.trim());
+      await reanalyzeNote(note.id);
       await reloadNote();
       setShowExtracted(true);
     } catch {
@@ -894,6 +894,7 @@ export default function EditScreen({ route, navigation }: Props) {
               // ✅ Fix: build URL từ file_path, không dùng file_url
               mediaUrl={buildFileUrl(note?.file_path)}
               mediaType={note?.type}
+              attachments={(note?.attachments ?? []).map((a) => ({ ...a, file_path: buildFileUrl(a.file_path) || a.file_path }))}
               onPress={() => setIsEditing(true)}
               onLinkPress={(url) => Linking.openURL(url).catch(() => {})}
               onCheckboxToggle={handleCheckboxToggle}

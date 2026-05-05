@@ -60,6 +60,8 @@ def _extract_text_from_file_bytes(file_bytes: bytes, filename: str | None) -> st
     return ""
 
 
+
+
 # ── Helper: Lưu hoặc UPDATE note + extracted_info vào DB ─────────────────────
 
 def save_or_update_db(
@@ -81,8 +83,6 @@ def save_or_update_db(
         if not existing:
             conn.close()
             raise HTTPException(status_code=404, detail=f"Note {note_id} không tồn tại")
-        current = conn.execute("SELECT file_path FROM notes WHERE id = ?", [note_id]).fetchone()
-        effective_file_path = file_path if file_path is not None else (current["file_path"] if current else None)
 
         conn.execute(
             """UPDATE notes SET
@@ -94,7 +94,7 @@ def save_or_update_db(
                 content,
                 extracted.get("summary"),
                 note_type,
-                effective_file_path,
+                file_path,
                 tags_json,
                 location,
                 now,
@@ -190,18 +190,7 @@ def save_or_update_db(
                 [note_id, tag["id"]]
             )
             conn.commit()
-    if file_path:
-        exists = conn.execute(
-            "SELECT id FROM note_attachments WHERE note_id = ? AND file_path = ?",
-            [note_id, file_path],
-        ).fetchone()
-        if not exists:
-            conn.execute(
-                """INSERT INTO note_attachments (note_id, type, file_path, file_name, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                [note_id, note_type if note_type in ("image", "voice", "video", "file") else "file", file_path, os.path.basename(file_path), now],
-            )
-            conn.commit()
+
     note = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
     conn.close()
     return dict(note)
@@ -374,22 +363,11 @@ async def capture_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/reanalyze/{note_id}")
 def reanalyze_note(note_id: int):
     """Re-run AI extraction using BOTH note content and attachment-derived text."""
     conn = get_connection()
-    if file_path:
-        exists = conn.execute(
-            "SELECT id FROM note_attachments WHERE note_id = ? AND file_path = ?",
-            [note_id, file_path],
-        ).fetchone()
-        if not exists:
-            conn.execute(
-                """INSERT INTO note_attachments (note_id, type, file_path, file_name, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                [note_id, note_type if note_type in ("image", "voice", "video", "file") else "file", file_path, os.path.basename(file_path), now],
-            )
-            conn.commit()
     note = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
     if not note:
         conn.close()

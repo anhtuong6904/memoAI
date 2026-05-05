@@ -39,13 +39,30 @@ class NoteUpdate(BaseModel):
 def note_not_found(note_id: int):
     raise HTTPException(status_code=404, detail=f"Note {note_id} không tồn tại")
 
+def _get_attachments_map(conn, note_ids: list[int]) -> dict[int, list[dict]]:
+    if not note_ids:
+        return {}
+    placeholders = ",".join(["?"] * len(note_ids))
+    rows = conn.execute(
+        f"""SELECT id, note_id, type, file_path, file_name, mime_type, file_size,
+                   duration, width, height, caption, display_order, created_at
+            FROM note_attachments
+            WHERE note_id IN ({placeholders})
+            ORDER BY note_id, display_order, created_at""",
+        note_ids,
+    ).fetchall()
+    result: dict[int, list[dict]] = {}
+    for r in rows:
+        item = dict(r)
+        result.setdefault(item["note_id"], []).append(item)
+    return result
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/")
 def get_notes(
     tag:    Optional[str] = Query(None, description="Lọc theo tag"),
-    type:   Optional[str] = Query(None, description="Lọc theo type: text|image|voice|video"),
+    type:   Optional[str] = Query(None, description="Lọc theo type: text|image|voice|video|file"),
     limit:  int           = Query(10,   description="Số note tối đa trả về"),
     offset: int           = Query(0,    description="Bỏ qua bao nhiêu note (phân trang)"),
 ):
@@ -73,12 +90,16 @@ def get_notes(
     params.extend([limit, offset])
 
     notes = conn.execute(query, params).fetchall()
+    note_dicts = [dict(n) for n in notes]
+    attachments_map = _get_attachments_map(conn, [n["id"] for n in note_dicts])
+    for n in note_dicts:
+        n["attachments"] = attachments_map.get(n["id"], [])
     conn.close()
 
     return {
         "success": True,
-        "data": [dict(n) for n in notes],
-        "count": len(notes),
+        "data": note_dicts,
+        "count": len(note_dicts),
     }
 
 
@@ -100,11 +121,21 @@ def get_note(note_id: int):
         "SELECT * FROM extracted_info WHERE note_id = ?", [note_id]
     ).fetchone()
 
+    attachments = conn.execute(
+        """SELECT id, note_id, type, file_path, file_name, mime_type, file_size,
+                  duration, width, height, caption, display_order, created_at
+           FROM note_attachments WHERE note_id = ? ORDER BY display_order, created_at""",
+        [note_id],
+    ).fetchall()
+
     conn.close()
+
+    note_data = dict(note)
+    note_data["attachments"] = [dict(a) for a in attachments]
 
     return {
         "success":   True,
-        "data":      dict(note),
+        "data":      note_data,
         "extracted": dict(extracted) if extracted else None,
     }
 

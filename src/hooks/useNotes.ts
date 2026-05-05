@@ -41,7 +41,7 @@ export interface ExtractedInfo {
 }
 
 export interface FilterOptions {
-  type?: "text" | "image" | "voice" | "video" | "all";
+  type?: "text" | "image" | "voice" | "video" | "file" | "all";
   tag?: string;
 }
 
@@ -71,7 +71,7 @@ interface UseNotesReturn {
    * Dùng khi muốn AI tự động trích xuất thông tin từ text.
    * Chậm hơn ~3s nhưng tạo ra extracted_info tự động.
    */
-  captureNoteFromText: (text: string) => Promise<Note>;
+  captureNoteFromText: (text: string, noteId?: number) => Promise<Note>;
 
   updateNote: (id: number, data: Partial<Note>) => Promise<Note>;
   pinNote: (note: Note) => Promise<void>;
@@ -141,10 +141,17 @@ export function useNotes(): UseNotesReturn {
   };
 
   // ── Tạo note qua AI pipeline ───────────────────────────────────────────────
-  const captureNoteFromText = async (text: string): Promise<Note> => {
-    const newNote = await captureText(text);
-    setNotes((prev) => [newNote, ...prev]);
-    return newNote;
+  const captureNoteFromText = async (
+    text: string,
+    noteId?: number,
+  ): Promise<Note> => {
+    const noteResult = await captureText(text, undefined, noteId);
+    if (noteId) {
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? noteResult : n)));
+    } else {
+      setNotes((prev) => [noteResult, ...prev]);
+    }
+    return noteResult;
   };
 
   // ── Update note ────────────────────────────────────────────────────────────

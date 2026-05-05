@@ -1,5 +1,3 @@
-
-
 import { Ionicons } from "@expo/vector-icons";
 import React, { memo, useMemo, useRef } from "react";
 import {
@@ -13,7 +11,7 @@ import {
 } from "react-native";
 import Markdown from "react-native-markdown-display";
 import { COLORS } from "../constants/colors";
-
+import { NoteAttachment } from "../types";
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,7 +42,8 @@ export interface MarkdownViewerProps {
 
   // Media
   mediaUrl?: string;
-  mediaType?: "image" | "voice" | "video" | "text";
+  mediaType?: "image" | "voice" | "video" | "text" | "file";
+  attachments?: NoteAttachment[];
 
   // Interaction
   /** Tap vào viewer → vào edit mode */
@@ -319,6 +318,7 @@ const MarkdownViewer = memo(
     extractedInfo,
     mediaUrl,
     mediaType,
+    attachments = [],
     onPress,
     onLinkPress,
     onCheckboxToggle,
@@ -431,6 +431,24 @@ const MarkdownViewer = memo(
             resizeMode="cover"
           />
         )}
+
+        {attachments.length > 0 && (
+          <View style={ms.attachWrap}>
+            <Text style={ms.attachTitle}>📎 Tệp đính kèm</Text>
+            {attachments.map((a) => (
+              <TouchableOpacity
+                key={a.id}
+                style={ms.attachItem}
+                onPress={() => Linking.openURL(a.file_path.startsWith("http") ? a.file_path : "").catch(() => {})}
+                activeOpacity={0.7}
+              >
+                <Text style={ms.attachName} numberOfLines={1}>{a.file_name || a.file_path}</Text>
+                <Text style={ms.attachType}>{a.type}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {mediaUrl && (mediaType === "voice" || mediaType === "video") && (
           <View style={ms.audioChip}>
             <Ionicons
@@ -571,6 +589,11 @@ const ms = StyleSheet.create({
     borderColor: COLORS.border,
   },
   audioLabel: { flex: 1, fontSize: 13, color: COLORS.textMuted },
+  attachWrap: { marginTop: 8, marginBottom: 10, gap: 8 },
+  attachTitle: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600" },
+  attachItem: { backgroundColor: COLORS.surface, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  attachName: { flex: 1, color: COLORS.text, fontSize: 13 },
+  attachType: { color: COLORS.accent, fontSize: 12, textTransform: "uppercase" },
 
   exCard: {
     marginBottom: 14,
