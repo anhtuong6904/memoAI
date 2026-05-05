@@ -150,40 +150,29 @@ const postFormData = async (
 };
 
 /**
- * Capture text → AI pipeline.
- * Backend: POST /capture/text
- * mistral:7b trích xuất thông tin → tạo note mới + extracted_info.
- *
- * @param text     - nội dung text user nhập
- * @param location - JSON string vị trí GPS (optional)
- *                   vd: '{"lat":10.76,"lng":106.66,"address":"Quận 1"}'
+ * captureText — thêm noteId optional
  */
 export const captureText = async (
   text: string,
   location?: string,
+  noteId?: number,
 ): Promise<Note> => {
   const formData = new FormData();
   formData.append("text", text);
   if (location) formData.append("location", location);
+  if (noteId) formData.append("note_id", String(noteId));
 
   const result = await postFormData("/capture/text", formData);
   return result.data as Note;
 };
 
 /**
- * Capture ảnh → AI pipeline.
- * Backend: POST /capture/image
- * llava:7b đọc ảnh → trích xuất text + thông tin → tạo note mới.
- *
- * @param imageUri - URI từ expo-image-picker vd: "file:///data/.../photo.jpg"
- * @param location - JSON string vị trí GPS (optional)
- *
- * Trả về Note với file_url = "http://192.168.x.x:8000/uploads/images/xxx.jpg"
- * → Dùng trực tiếp trong <Image source={{ uri: note.file_url }} />
+ * captureImage — thêm noteId optional
  */
 export const captureImage = async (
   imageUri: string,
   location?: string,
+  noteId?: number,
 ): Promise<Note> => {
   const formData = new FormData();
   formData.append("file", {
@@ -192,27 +181,19 @@ export const captureImage = async (
     type: "image/jpeg",
   } as any);
   if (location) formData.append("location", location);
+  if (noteId) formData.append("note_id", String(noteId));
 
   const result = await postFormData("/capture/image", formData);
   return result.data as Note;
 };
 
 /**
- * Capture giọng nói → AI pipeline.
- * Backend: POST /capture/voice
- * Whisper STT → transcript → mistral trích xuất → tạo note mới.
- *
- * @param audioUri - URI từ expo-av vd: "file:///data/.../recording.m4a"
- * @param location - JSON string vị trí GPS (optional)
- *
- * Trả về Note với:
- *   file_url   = "http://192.168.x.x:8000/uploads/audio/xxx.m4a"
- *   transcript = "nội dung giọng nói đã nhận diện"
- * → Phát lại audio: <Audio source={{ uri: note.file_url }} />
+ * captureVoice — thêm noteId optional
  */
 export const captureVoice = async (
   audioUri: string,
   location?: string,
+  noteId?: number,
 ): Promise<Note & { transcript: string }> => {
   const isM4a = audioUri.toLowerCase().includes(".m4a");
   const mimeType = isM4a ? "audio/x-m4a" : "audio/mp4";
@@ -225,6 +206,7 @@ export const captureVoice = async (
     type: mimeType,
   } as any);
   if (location) formData.append("location", location);
+  if (noteId) formData.append("note_id", String(noteId));
 
   const result = await postFormData("/capture/voice", formData);
   return {
@@ -232,7 +214,6 @@ export const captureVoice = async (
     transcript: result.transcript as string,
   };
 };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // AI — Search & Chat
 // ─────────────────────────────────────────────────────────────────────────────

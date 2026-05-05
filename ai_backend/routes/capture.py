@@ -1,9 +1,4 @@
-"""
-routes/capture.py — AI Pipeline (Core của đề thầy)
-POST /capture/image → ảnh → llava → note mới
-POST /capture/voice → audio → Whisper → mistral → note mới
-POST /capture/text  → text → mistral → note mới
-"""
+# routes/capture.py
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from typing import Optional
@@ -17,49 +12,73 @@ from services.ollama import extract_from_text, extract_from_image
 router = APIRouter()
 
 
-# ── Helper: Lưu note + extracted_info vào DB ─────────────────────────────────
+# ── Helper: Lưu hoặc UPDATE note + extracted_info vào DB ─────────────────────
 
-def save_to_db(
+def save_or_update_db(
     content:   str,
     note_type: str,
     extracted: dict,
+    note_id:   Optional[int] = None,   # <-- nếu có → UPDATE
     file_path: Optional[str] = None,
     location:  Optional[str] = None,
 ) -> dict:
-    """
-    Lưu note gốc và thông tin AI trích xuất vào DB.
-    Tự động tạo reminder nếu extracted['reminder_needed'] = True.
-    
-    Returns: dict của note vừa tạo
-    """
     conn = get_connection()
     now  = datetime.now().isoformat()
-
-    # ── 1. Tạo note trong bảng notes ─────────────────────────────────────────
-    tags_json = json.dumps(extracted.get("tags", []), ensure_ascii=False)
-
-    cursor = conn.execute(
-        """INSERT INTO notes
-           (title, content, summary, type, file_path, tags, location,
-            ai_processed, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
-        [
-            extracted.get("title"),
-            content,
-            extracted.get("summary"),
-            note_type,
-            file_path,
-            tags_json,
-            location,
-            now, now,
-        ]
-    )
-    conn.commit()
-    note_id = cursor.lastrowid
-
-    # ── 2. Lưu extracted_info ─────────────────────────────────────────────────
+    tags_json   = json.dumps(extracted.get("tags", []), ensure_ascii=False)
     action_items = json.dumps(extracted.get("action_items", []), ensure_ascii=False)
 
+    if note_id:
+        # ── UPDATE mode ───────────────────────────────────────────────────────
+        existing = conn.execute("SELECT id FROM notes WHERE id = ?", [note_id]).fetchone()
+        if not existing:
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Note {note_id} không tồn tại")
+
+        conn.execute(
+            """UPDATE notes SET
+               title=?, content=?, summary=?, type=?, file_path=?,
+               tags=?, location=?, ai_processed=1, updated_at=?
+               WHERE id=?""",
+            [
+                extracted.get("title"),
+                content,
+                extracted.get("summary"),
+                note_type,
+                file_path,
+                tags_json,
+                location,
+                now,
+                note_id,
+            ]
+        )
+        conn.commit()
+
+        # Xóa extracted_info cũ rồi insert lại (đơn giản hơn partial update)
+        conn.execute("DELETE FROM extracted_info WHERE note_id = ?", [note_id])
+        conn.commit()
+
+    else:
+        # ── INSERT mode ───────────────────────────────────────────────────────
+        cursor = conn.execute(
+            """INSERT INTO notes
+               (title, content, summary, type, file_path, tags, location,
+                ai_processed, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+            [
+                extracted.get("title"),
+                content,
+                extracted.get("summary"),
+                note_type,
+                file_path,
+                tags_json,
+                location,
+                now, now,
+            ]
+        )
+        conn.commit()
+        note_id = cursor.lastrowid
+
+    # ── extracted_info (dùng chung cho cả INSERT và UPDATE) ───────────────────
     conn.execute(
         """INSERT INTO extracted_info
            (note_id, person_name, phone, email, organization,
@@ -80,13 +99,15 @@ def save_to_db(
             extracted.get("category", "note"),
             action_items,
             1 if extracted.get("reminder_needed") else 0,
-            json.dumps(extracted, ensure_ascii=False),  # raw backup
+            json.dumps(extracted, ensure_ascii=False),
             now,
         ]
     )
     conn.commit()
 
-    # ── 3. Tự động tạo reminder nếu cần ──────────────────────────────────────
+    # ── Reminder (xóa cũ nếu update, tạo mới nếu cần) ────────────────────────
+    conn.execute("DELETE FROM reminders WHERE note_id = ?", [note_id])
+    conn.commit()
     if extracted.get("reminder_needed") and extracted.get("event_time"):
         reminder_title = (
             extracted.get("event_title")
@@ -100,19 +121,18 @@ def save_to_db(
         )
         conn.commit()
 
-    # ── 4. Tự động tạo tags trong bảng tags + note_tags ──────────────────────
+    # ── Tags (xóa note_tags cũ, insert lại) ──────────────────────────────────
+    conn.execute("DELETE FROM note_tags WHERE note_id = ?", [note_id])
+    conn.commit()
     for tag_name in extracted.get("tags", []):
         tag_name = tag_name.strip().lower()
         if not tag_name:
             continue
-
-        # Tạo tag nếu chưa có (INSERT OR IGNORE)
         conn.execute(
             "INSERT OR IGNORE INTO tags (name, created_at) VALUES (?, ?)",
             [tag_name, now]
         )
         conn.commit()
-
         tag = conn.execute("SELECT id FROM tags WHERE name = ?", [tag_name]).fetchone()
         if tag:
             conn.execute(
@@ -121,7 +141,6 @@ def save_to_db(
             )
             conn.commit()
 
-    # ── 5. Trả về note vừa tạo ───────────────────────────────────────────────
     note = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
     conn.close()
     return dict(note)
@@ -132,25 +151,21 @@ def save_to_db(
 @router.post("/text")
 async def capture_text(
     text:     str           = Form(...),
-    location: Optional[str] = Form(None),  # JSON: {"lat":..., "lng":..., "address":...}
+    note_id:  Optional[int] = Form(None),   
+    location: Optional[str] = Form(None),
 ):
-    """
-    Nhận text → mistral:7b trích xuất → lưu DB → trả về note.
-    Đây là pipeline đơn giản nhất.
-    """
     try:
         extracted = extract_from_text(text)
-        note      = save_to_db(
+        note      = save_or_update_db(
             content=text,
             note_type="text",
             extracted=extracted,
+            note_id=note_id,
             location=location,
         )
-        return {
-            "success":   True,
-            "data":      note,
-            "extracted": extracted,
-        }
+        return {"success": True, "data": note, "extracted": extracted}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -158,45 +173,36 @@ async def capture_text(
 @router.post("/image")
 async def capture_image(
     file:     UploadFile    = File(...),
+    note_id:  Optional[int] = Form(None),   # <-- thêm
     location: Optional[str] = Form(None),
 ):
-    """
-    Nhận ảnh → encode base64 → llava:7b đọc → trích xuất → lưu DB.
-    """
     try:
-        # Đọc ảnh và encode base64
         image_bytes = await file.read()
         image_b64   = base64.b64encode(image_bytes).decode("utf-8")
 
-        # Lưu file ảnh local
         import os
         uploads_dir = "uploads"
         os.makedirs(uploads_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename  = f"{timestamp}_{file.filename}"
         file_path = f"{uploads_dir}/{filename}"
-
         with open(file_path, "wb") as f:
             f.write(image_bytes)
 
-        # Gọi llava để đọc ảnh
         extracted = extract_from_image(image_b64)
+        content   = extracted.get("extracted_text") or extracted.get("summary") or ""
 
-        # Content = text trích xuất từ ảnh
-        content = extracted.get("extracted_text") or extracted.get("summary") or ""
-
-        note = save_to_db(
+        note = save_or_update_db(
             content=content,
             note_type="image",
             extracted=extracted,
+            note_id=note_id,
             file_path=file_path,
             location=location,
         )
-        return {
-            "success":   True,
-            "data":      note,
-            "extracted": extracted,
-        }
+        return {"success": True, "data": note, "extracted": extracted}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -204,30 +210,24 @@ async def capture_image(
 @router.post("/voice")
 async def capture_voice(
     file:     UploadFile    = File(...),
+    note_id:  Optional[int] = Form(None),   # <-- thêm
     location: Optional[str] = Form(None),
 ):
-    """
-    Nhận audio → Whisper STT → text → mistral trích xuất → lưu DB.
-    Pipeline: audio file → transcript → extracted info → note
-    """
     try:
         from services.whisper import transcribe_audio
 
-        # Bước 1: Whisper STT
         audio_bytes = await file.read()
         transcript  = transcribe_audio(audio_bytes, file.filename)
 
         if not transcript.strip():
             raise HTTPException(status_code=400, detail="Không nhận diện được giọng nói")
 
-        # Bước 2: mistral trích xuất thông tin từ transcript
         extracted = extract_from_text(transcript)
-
-        # Bước 3: Lưu vào DB
-        note = save_to_db(
-            content=transcript,     # Lưu transcript gốc làm content
+        note      = save_or_update_db(
+            content=transcript,
             note_type="voice",
             extracted=extracted,
+            note_id=note_id,
             location=location,
         )
         return {

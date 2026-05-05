@@ -159,6 +159,15 @@ def init_db() -> None:
         FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE,
         FOREIGN KEY (tag_id)  REFERENCES tags(id)  ON DELETE CASCADE
     );
+    -- ══════════════════════════════════════════════════════════════════
+    -- note-attachment — bảng trung gian dùng để lưu các file attachment
+    -- một note có nhiều attachment
+    -- ══════════════════════════════════════════════════════════════════ 
+
+    CREATE TABLE IF NOT EXISTS note_attachment(
+        note_id INTEGER NOT NULL,
+        
+    )
 
     -- ══════════════════════════════════════════════════════════════════
     -- INDEX — tăng tốc các truy vấn thường dùng

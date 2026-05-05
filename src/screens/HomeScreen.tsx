@@ -6,8 +6,6 @@ import {
 import { SafeAreaView }        from 'react-native-safe-area-context';
 import { useNavigation }       from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { BottomTabNavigationProp }   from '@react-navigation/bottom-tabs';
-import { CompositeNavigationProp }   from '@react-navigation/native';
 
 import { COLORS } from '../constants/colors';
 import { Note, RootStackParamList } from '../types';

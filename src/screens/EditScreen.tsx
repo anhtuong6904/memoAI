@@ -1,168 +1,269 @@
 /**
- * screens/EditScreen.tsx
- * Hỗ trợ: edit/view toggle, markdown render, extracted info panel,
- *          image capture, AI analyze, auto-save.
+ * screens/EditScreen.tsx  — v4
+ *
+ * Thêm:
+ *  - Media blocks: image, audio, video, file (picker + insert vào editor)
+ *  - Toolbar 2 tầng:
+ *      Tầng 1 (format): H1 H2 H3 • 1. ☐ " — (scroll ngang)
+ *      Tầng 2 (actions): 🖼️ 🎙️ 🎬 📎 | Lưu
+ *  - Fix bug file_url: build từ SERVER_URL + '/' + note.file_path
+ *  - blocksToText bỏ qua media blocks (không serialize ra markdown)
+ *  - onDelete block handler
  */
 
-import { Ionicons }               from '@expo/vector-icons';
-import { useFocusEffect }         from '@react-navigation/native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import * as ImagePicker           from 'expo-image-picker';
-import MarkdownDisplay            from 'react-native-markdown-display';
+import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 import React, {
-  useCallback, useEffect, useLayoutEffect,
-  useRef, useState,
-} from 'react';
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  ActivityIndicator, Alert, Animated, Image,
-  Keyboard, KeyboardAvoidingView, Platform,
-  ScrollView, Share, StyleSheet, Text,
-  TextInput, TouchableOpacity, View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+  ActivityIndicator,
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-import BlockItem         from '../components/BlockEditor/BlockItem';
-import SlashMenu         from '../components/BlockEditor/SlashMenu';
-import { COLORS }        from '../constants/colors';
-import { useNoteDetail } from '../hooks/useNotes';
+import BlockItem from "../components/Editor/BlockItem";
+import SlashMenu from "../components/Editor/SlashMenu";
+import MarkdownViewer from "../components/MarkdownViewer";
+import { COLORS } from "../constants/colors";
+import { SERVER_URL } from "../constants/config";
+import { useNoteDetail } from "../hooks/useNotes";
 import {
-  captureImage, captureText,
-  deleteNote,   updateNote,
-} from '../services/api';
-import { Block, BlockType, RootStackParamList } from '../types';
+  captureText,
+  createNote,
+  deleteNote,
+  updateNote,
+} from "../services/api";
+import { Block, BlockType, RootStackParamList } from "../types";
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Edit'>;
+type Props = NativeStackScreenProps<RootStackParamList, "Edit">;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 let _uid = 0;
 const uid = () => `b_${Date.now()}_${_uid++}`;
 
+/** Chuyển text → blocks; gộp plain text liên tiếp thành 1 block */
 function textToBlocks(text: string): Block[] {
-  if (!text.trim()) return [{ id: uid(), type: 'text', content: '' }];
-  return text.split('\n').map((line): Block => {
-    if (/^### /.test(line))       return { id: uid(), type: 'heading3',  content: line.slice(4) };
-    if (/^## /.test(line))        return { id: uid(), type: 'heading2',  content: line.slice(3) };
-    if (/^# /.test(line))         return { id: uid(), type: 'heading1',  content: line.slice(2) };
-    if (/^- \[x\] /i.test(line))  return { id: uid(), type: 'checkbox',  content: line.slice(6), checked: true  };
-    if (/^- \[ \] /.test(line))   return { id: uid(), type: 'checkbox',  content: line.slice(6), checked: false };
-    if (/^- /.test(line))         return { id: uid(), type: 'bullet',    content: line.slice(2) };
-    if (/^\d+\. /.test(line)) {
-      const m = line.match(/^\d+\. (.*)/);
-      return { id: uid(), type: 'numbered', content: m ? m[1] : line };
+  if (!text.trim()) return [{ id: uid(), type: "text", content: "" }];
+  const lines = text.split("\n");
+  const result: Block[] = [];
+  let pending: string[] = [];
+  const flush = () => {
+    if (!pending.length) return;
+    result.push({ id: uid(), type: "text", content: pending.join("\n") });
+    pending = [];
+  };
+  for (const line of lines) {
+    if (/^### /.test(line)) {
+      flush();
+      result.push({ id: uid(), type: "heading3", content: line.slice(4) });
+      continue;
     }
-    if (/^> /.test(line))          return { id: uid(), type: 'quote',   content: line.slice(2) };
-    if (/^---$/.test(line.trim())) return { id: uid(), type: 'divider', content: '' };
-    return { id: uid(), type: 'text', content: line };
-  });
+    if (/^## /.test(line)) {
+      flush();
+      result.push({ id: uid(), type: "heading2", content: line.slice(3) });
+      continue;
+    }
+    if (/^# /.test(line)) {
+      flush();
+      result.push({ id: uid(), type: "heading1", content: line.slice(2) });
+      continue;
+    }
+    if (/^- \[x\] /i.test(line)) {
+      flush();
+      result.push({
+        id: uid(),
+        type: "checkbox",
+        content: line.slice(6),
+        checked: true,
+      });
+      continue;
+    }
+    if (/^- \[ \] /.test(line)) {
+      flush();
+      result.push({
+        id: uid(),
+        type: "checkbox",
+        content: line.slice(6),
+        checked: false,
+      });
+      continue;
+    }
+    if (/^- /.test(line)) {
+      flush();
+      result.push({ id: uid(), type: "bullet", content: line.slice(2) });
+      continue;
+    }
+    if (/^\d+\. /.test(line)) {
+      flush();
+      const m = line.match(/^\d+\. (.*)/);
+      result.push({ id: uid(), type: "numbered", content: m ? m[1] : line });
+      continue;
+    }
+    if (/^> /.test(line)) {
+      flush();
+      result.push({ id: uid(), type: "quote", content: line.slice(2) });
+      continue;
+    }
+    if (/^---$/.test(line.trim())) {
+      flush();
+      result.push({ id: uid(), type: "divider", content: "" });
+      continue;
+    }
+    pending.push(line);
+  }
+  flush();
+  return result.length ? result : [{ id: uid(), type: "text", content: "" }];
 }
 
+/**
+ * Chuyển blocks → markdown text.
+ * Media blocks (image/audio/video/file) KHÔNG serialize ra text —
+ * chúng chỉ tồn tại trong editor, được lưu qua API capture riêng.
+ */
 function blocksToText(blocks: Block[]): string {
-  return blocks.map(b => {
-    switch (b.type) {
-      case 'heading1': return `# ${b.content}`;
-      case 'heading2': return `## ${b.content}`;
-      case 'heading3': return `### ${b.content}`;
-      case 'bullet':   return `- ${b.content}`;
-      case 'numbered': return `1. ${b.content}`;
-      case 'checkbox': return b.checked ? `- [x] ${b.content}` : `- [ ] ${b.content}`;
-      case 'quote':    return `> ${b.content}`;
-      case 'divider':  return '---';
-      default:         return b.content;
-    }
-  }).join('\n');
+  return blocks
+    .filter((b) => !["image", "audio", "video", "file"].includes(b.type))
+    .map((b) => {
+      switch (b.type) {
+        case "heading1":
+          return `# ${b.content}`;
+        case "heading2":
+          return `## ${b.content}`;
+        case "heading3":
+          return `### ${b.content}`;
+        case "bullet":
+          return `- ${b.content}`;
+        case "numbered":
+          return `1. ${b.content}`;
+        case "checkbox":
+          return b.checked ? `- [x] ${b.content}` : `- [ ] ${b.content}`;
+        case "quote":
+          return `> ${b.content}`;
+        case "divider":
+          return "---";
+        default:
+          return b.content;
+      }
+    })
+    .join("\n");
 }
 
 const parseTags = (raw: string): string[] => {
-  try { return JSON.parse(raw); } catch { return []; }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
 };
 
 const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
+  new Date(iso).toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 
-const LIST_TYPES: BlockType[] = ['bullet', 'numbered', 'checkbox'];
-
-const TOOLBAR_ITEMS: { id: BlockType | 'divider'; label: string }[] = [
-  { id: 'heading1', label: 'H1' }, { id: 'heading2', label: 'H2' },
-  { id: 'heading3', label: 'H3' }, { id: 'bullet',   label: '•'  },
-  { id: 'numbered', label: '1.' }, { id: 'checkbox', label: '☐'  },
-  { id: 'quote',    label: '"'  }, { id: 'divider',  label: '—'  },
-];
-
-// ── Markdown styles ───────────────────────────────────────────────────────────
-const mdStyles = {
-  body:         { color: COLORS.text,    fontSize: 15, lineHeight: 24 },
-  heading1:     { color: COLORS.text,    fontSize: 26, fontWeight: '800' as const, marginBottom: 8,  marginTop: 12 },
-  heading2:     { color: COLORS.text,    fontSize: 22, fontWeight: '700' as const, marginBottom: 6,  marginTop: 10 },
-  heading3:     { color: COLORS.text,    fontSize: 18, fontWeight: '600' as const, marginBottom: 4,  marginTop: 8  },
-  bullet_list:  { color: COLORS.text    },
-  ordered_list: { color: COLORS.text    },
-  list_item:    { color: COLORS.text,    fontSize: 15, lineHeight: 24 },
-  blockquote:   {
-    backgroundColor: COLORS.surface,
-    borderLeftColor: COLORS.accent, borderLeftWidth: 3,
-    paddingLeft: 12, paddingVertical: 4, marginVertical: 6,
-  },
-  code_inline: {
-    backgroundColor: COLORS.surface, color: COLORS.accent,
-    borderRadius: 4, paddingHorizontal: 4,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 13,
-  },
-  fence: {
-    backgroundColor: COLORS.surface, borderRadius: 8,
-    padding: 12, marginVertical: 8,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 13,
-  },
-  hr:        { backgroundColor: COLORS.border, height: 1, marginVertical: 12 },
-  link:      { color: COLORS.accent },
-  paragraph: { marginBottom: 8, color: COLORS.text },
-  strong:    { color: COLORS.text,    fontWeight: '700' as const },
-  em:        { color: COLORS.textMuted, fontStyle: 'italic' as const },
+/** ✅ Fix: build full URL từ relative file_path */
+const buildFileUrl = (filePath?: string): string | undefined => {
+  if (!filePath) return undefined;
+  // Chuẩn hóa dấu \ → /
+  const normalized = filePath.replace(/\\/g, "/");
+  return `${SERVER_URL}/${normalized}`;
 };
 
-// ── Component ─────────────────────────────────────────────────────────────────
+const LIST_TYPES: BlockType[] = ["bullet", "numbered", "checkbox"];
+
+// Format toolbar (tầng 1)
+const FORMAT_ITEMS: { id: BlockType | "divider"; label: string }[] = [
+  { id: "heading1", label: "H1" },
+  { id: "heading2", label: "H2" },
+  { id: "heading3", label: "H3" },
+  { id: "bullet", label: "•" },
+  { id: "numbered", label: "1." },
+  { id: "checkbox", label: "☐" },
+  { id: "quote", label: '"' },
+  { id: "divider", label: "—" },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EditScreen
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function EditScreen({ route, navigation }: Props) {
   const noteId = route.params?.noteId;
-  const isNew  = noteId === undefined;
+  const isNew = noteId === undefined;
 
-  const { note, extracted, loading: noteLoading, reload: reloadNote } = useNoteDetail(noteId);
+  const {
+    note,
+    extracted,
+    loading: noteLoading,
+    reload: reloadNote,
+  } = useNoteDetail(noteId);
 
-  // isEditing:
-  //   isNew = true  → true  (mở editor ngay)
-  //   isNew = false → false (xem markdown trước, tap để edit)
-  const [isEditing,     setIsEditing]     = useState(isNew);
-  const [saving,        setSaving]        = useState(false);
-  const [analyzing,     setAnalyzing]     = useState(false);
-  const [title,         setTitle]         = useState('');
-  const [blocks,        setBlocks]        = useState<Block[]>([{ id: uid(), type: 'text', content: '' }]);
-  const [focusedId,     setFocusedId]     = useState<string | null>(null);
-  const [tags,          setTags]          = useState<string[]>([]);
-  const [tagInput,      setTagInput]      = useState('');
-  const [showTagInput,  setShowTagInput]  = useState(false);
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [isEditing, setIsEditing] = useState(isNew);
+  const [saving, setSaving] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [showExtracted, setShowExtracted] = useState(false);
-  const [slashVisible,  setSlashVisible]  = useState(false);
-  const [slashQuery,    setSlashQuery]    = useState('');
-  const [slashBlockId,  setSlashBlockId]  = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
+  const [showTagInput, setShowTagInput] = useState(false);
+  const [rawMarkdown, setRawMarkdown] = useState("");
+  const [blocks, setBlocks] = useState<Block[]>([
+    { id: uid(), type: "text", content: "" },
+  ]);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [slashVisible, setSlashVisible] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  const [slashBlockId, setSlashBlockId] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
 
-  const titleRef     = useRef<TextInput>(null);
-  const isDirty      = useRef(false);
-  const saveTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const titleRef = useRef<TextInput>(null);
+  const isDirty = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedOpacity = useRef(new Animated.Value(0)).current;
+  const unsavedDot = useRef(new Animated.Value(0)).current;
 
-  // ── Sync khi note load xong ───────────────────────────────────────────────
+  // ── Sync note ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!note) return;
-    setTitle(note.title ?? '');
-    setBlocks(textToBlocks(note.content));
+    setTitle(note.title ?? "");
+    setRawMarkdown(note.content ?? "");
     setTags(parseTags(note.tags));
-    setIsEditing(false);  // note cũ load xong → view mode
+    setIsEditing(false);
   }, [note]);
 
-  useFocusEffect(useCallback(() => { reloadNote(); }, [reloadNote]));
+  useFocusEffect(
+    useCallback(() => {
+      reloadNote();
+    }, [reloadNote]),
+  );
 
   useEffect(() => {
     if (isNew) {
@@ -176,65 +277,110 @@ export default function EditScreen({ route, navigation }: Props) {
   }, [navigation]);
 
   useEffect(() => {
-    const unsub = navigation.addListener('beforeRemove', e => {
+    if (isEditing) setBlocks(textToBlocks(rawMarkdown));
+  }, [isEditing]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener("beforeRemove", (e) => {
       if (!isDirty.current) return;
       e.preventDefault();
       doSave(false).then(() => navigation.dispatch(e.data.action));
     });
     return unsub;
-  }, [navigation, title, blocks, tags]);
+  }, [navigation, title, blocks, tags, rawMarkdown]);
 
-  // ── Save ──────────────────────────────────────────────────────────────────
+  // ── Animations ─────────────────────────────────────────────────────────────
 
   const flashSaved = () => {
+    Animated.timing(unsavedDot, {
+      toValue: 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start();
     Animated.sequence([
-      Animated.timing(savedOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+      Animated.timing(savedOpacity, {
+        toValue: 1,
+        duration: 150,
+        useNativeDriver: true,
+      }),
       Animated.delay(900),
-      Animated.timing(savedOpacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+      Animated.timing(savedOpacity, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+      }),
     ]).start();
   };
 
-  const doSave = useCallback(async (showSpinner: boolean) => {
-    const content = blocksToText(blocks).trim();
-    if (!title.trim() && !content) return;
-    try {
-      if (showSpinner) setSaving(true);
-      if (isNew) {
-        // captureText → AI xử lý → tạo note + extracted_info
-        await captureText(content || ' ');
-      } else if (note) {
-        await updateNote(note.id, {
-          title:   title || '',
-          content: content || ' ',
-          tags:    JSON.stringify(tags),
-        });
-      }
-      isDirty.current = false;
-      flashSaved();
-      // Sau khi lưu → quay về view mode
-      if (!isNew) setIsEditing(false);
-    } catch (e) {
-      if (showSpinner)
-        Alert.alert('Lỗi', e instanceof Error ? e.message : 'Lưu thất bại');
-    } finally {
-      if (showSpinner) setSaving(false);
-    }
-  }, [blocks, isNew, note, tags, title]);
-
   const markDirty = () => {
-    isDirty.current = true;
+    if (!isDirty.current) {
+      isDirty.current = true;
+      Animated.timing(unsavedDot, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => doSave(false), 1200);
+    saveTimer.current = setTimeout(() => doSave(false), 2500);
   };
 
-  // ── Delete ────────────────────────────────────────────────────────────────
+  // ── Save ───────────────────────────────────────────────────────────────────
+
+  const doSave = useCallback(
+    async (showSpinner: boolean) => {
+      const content = (isEditing ? blocksToText(blocks) : rawMarkdown).trim();
+      if (!title.trim() && !content) return;
+      try {
+        if (showSpinner) setSaving(true);
+        if (isNew) {
+          const newNote = await createNote(content || " ", title || "");
+          isDirty.current = false;
+          flashSaved();
+          navigation.replace("Edit", { noteId: newNote.id });
+        } else if (note) {
+          await updateNote(note.id, {
+            title: title || "",
+            content: content || " ",
+            tags: JSON.stringify(tags),
+          });
+          setRawMarkdown(content || " ");
+          isDirty.current = false;
+          flashSaved();
+          setIsEditing(false);
+        }
+      } catch (e) {
+        if (showSpinner)
+          Alert.alert("Lỗi", e instanceof Error ? e.message : "Lưu thất bại");
+      } finally {
+        if (showSpinner) setSaving(false);
+      }
+    },
+    [blocks, isEditing, isNew, note, rawMarkdown, tags, title],
+  );
+
+  // ── Checkbox toggle (view mode) ────────────────────────────────────────────
+
+  const handleCheckboxToggle = useCallback(
+    (newMd: string) => {
+      setRawMarkdown(newMd);
+      if (note) updateNote(note.id, { content: newMd }).catch(() => {});
+    },
+    [note],
+  );
+
+  // ── Delete ─────────────────────────────────────────────────────────────────
 
   const handleDelete = () => {
-    if (isNew) { navigation.goBack(); return; }
-    Alert.alert('Xóa ghi chú', 'Không thể khôi phục. Tiếp tục?', [
-      { text: 'Huỷ', style: 'cancel' },
+    if (isNew) {
+      navigation.goBack();
+      return;
+    }
+    Alert.alert("Xóa ghi chú", "Không thể khôi phục. Tiếp tục?", [
+      { text: "Huỷ", style: "cancel" },
       {
-        text: 'Xóa', style: 'destructive',
+        text: "Xóa",
+        style: "destructive",
         onPress: async () => {
           if (!note) return;
           await deleteNote(note.id);
@@ -245,141 +391,301 @@ export default function EditScreen({ route, navigation }: Props) {
     ]);
   };
 
-  // ── Share ─────────────────────────────────────────────────────────────────
-
   const handleShare = () =>
-    Share.share({ message: `${title}\n\n${blocksToText(blocks)}`.trim() });
-
-  // ── AI Analyze — re-run pipeline thủ công ────────────────────────────────
+    Share.share({ message: `${title}\n\n${rawMarkdown}`.trim() });
 
   const handleAnalyze = async () => {
     if (!note) return;
     setAnalyzing(true);
     try {
-      await captureText(blocksToText(blocks).trim());
+      await captureText(rawMarkdown.trim());
       await reloadNote();
-      setShowExtracted(true);  // tự mở panel sau khi analyze xong
+      setShowExtracted(true);
     } catch {
-      Alert.alert('Lỗi', 'Không thể phân tích. Kiểm tra backend.');
+      Alert.alert("Lỗi", "Không thể phân tích. Kiểm tra backend.");
     } finally {
       setAnalyzing(false);
     }
   };
 
-  // ── Attach ────────────────────────────────────────────────────────────────
+  // ── Media pickers ──────────────────────────────────────────────────────────
 
-  const handleAttach = () => {
-    Keyboard.dismiss();
-    Alert.alert('Đính kèm', '', [
-      {
-        text: '🖼️  Chụp / Chọn ảnh',
-        onPress: async () => {
-          const res = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8,
-          });
-          if (!res.canceled && res.assets[0]) {
-            setSaving(true);
-            try {
-              await captureImage(res.assets[0].uri);
-              Alert.alert('✅ Thành công', 'Ảnh đã được AI xử lý và lưu thành ghi chú mới');
-            } catch {
-              Alert.alert('Lỗi', 'Không thể xử lý ảnh. Kiểm tra backend đang chạy không.');
-            } finally {
-              setSaving(false);
-            }
-          }
-        },
-      },
-      { text: 'Huỷ', style: 'cancel' },
-    ]);
+  /** Chèn image block từ thư viện ảnh */
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.9,
+      allowsEditing: false,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    insertMediaBlock({
+      type: "image",
+      uri: asset.uri,
+      fileName: asset.fileName ?? `photo-${Date.now()}.jpg`,
+      mimeType: asset.mimeType ?? "image/jpeg",
+      fileSize: asset.fileSize,
+      width: asset.width,
+      height: asset.height,
+    });
   };
 
-  // ── Block editing ─────────────────────────────────────────────────────────
+  /** Chèn video block từ thư viện */
+  const pickVideo = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    insertMediaBlock({
+      type: "video",
+      uri: asset.uri,
+      fileName: asset.fileName ?? `video-${Date.now()}.mp4`,
+      mimeType: asset.mimeType ?? "video/mp4",
+      fileSize: asset.fileSize,
+      duration: asset.duration ? asset.duration * 1000 : undefined, // s → ms
+    });
+  };
+
+  /** Chèn file block từ document picker */
+  const pickFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "*/*",
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      insertMediaBlock({
+        type: "file",
+        uri: asset.uri,
+        fileName: asset.name,
+        mimeType: asset.mimeType ?? "application/octet-stream",
+        fileSize: asset.size,
+      });
+    } catch {
+      Alert.alert("Lỗi", "Không thể chọn file.");
+    }
+  };
+
+  /**
+   * Ghi âm — placeholder (cần expo-av để implement đầy đủ).
+   * Hiện tại mở alert, có thể chọn audio từ thư viện.
+   */
+  const pickAudio = async () => {
+    // Option 1: chọn audio file từ thư viện
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "audio/*",
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      insertMediaBlock({
+        type: "audio",
+        uri: asset.uri,
+        fileName: asset.name,
+        mimeType: asset.mimeType ?? "audio/x-m4a",
+        fileSize: asset.size,
+      });
+    } catch {
+      Alert.alert("Lỗi", "Không thể chọn audio.");
+    }
+  };
+
+  /** Chèn media block sau block đang focus (hoặc cuối cùng) */
+  const insertMediaBlock = (params: Omit<Block, "id" | "content">) => {
+    markDirty();
+    const newBlock: Block = { id: uid(), content: "", ...params };
+    if (focusedId) {
+      const idx = blocks.findIndex((b) => b.id === focusedId);
+      const next = [...blocks];
+      next.splice(idx + 1, 0, newBlock);
+      setBlocks(next);
+    } else {
+      setBlocks((prev) => [...prev, newBlock]);
+    }
+    // Focus block text mới sau media
+    const textBlock: Block = { id: uid(), type: "text", content: "" };
+    setTimeout(() => {
+      setBlocks((prev) => {
+        const idx = prev.findIndex((b) => b.id === newBlock.id);
+        const next = [...prev];
+        next.splice(idx + 1, 0, textBlock);
+        return next;
+      });
+      setFocusedId(textBlock.id);
+    }, 50);
+  };
+
+  // ── Block editing ──────────────────────────────────────────────────────────
 
   const changeBlockText = (id: string, text: string) => {
     markDirty();
-    if (text.endsWith('/') && !slashVisible) {
-      setSlashBlockId(id); setSlashQuery(''); setSlashVisible(true);
-    } else if (slashVisible && slashBlockId === id) {
-      const idx = text.lastIndexOf('/');
-      idx >= 0 ? setSlashQuery(text.slice(idx + 1)) : setSlashVisible(false);
+    if (slashVisible && slashBlockId === id) {
+      if (!text.includes("/")) {
+        setSlashVisible(false);
+        setSlashBlockId(null);
+        setSlashQuery("");
+      } else {
+        setSlashQuery(text.slice(text.lastIndexOf("/") + 1));
+      }
     }
-    setBlocks(prev => prev.map(b => b.id === id ? { ...b, content: text } : b));
+    if (text.endsWith("/") && !slashVisible) {
+      setSlashBlockId(id);
+      setSlashQuery("");
+      setSlashVisible(true);
+    }
+    setBlocks((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, content: text } : b)),
+    );
   };
 
   const enterPress = (id: string) => {
     markDirty();
-    const idx  = blocks.findIndex(b => b.id === id);
+    const idx = blocks.findIndex((b) => b.id === id);
     const curr = blocks[idx];
-    if (LIST_TYPES.includes(curr.type) && curr.content === '') {
-      setBlocks(prev => prev.map(b => b.id === id ? { ...b, type: 'text' } : b));
+    if (LIST_TYPES.includes(curr.type) && curr.content === "") {
+      setBlocks((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, type: "text" } : b)),
+      );
       return;
     }
-    const newBlock: Block = {
-      id: uid(), type: LIST_TYPES.includes(curr.type) ? curr.type : 'text',
-      content: '', checked: false,
+    const nb: Block = {
+      id: uid(),
+      type: LIST_TYPES.includes(curr.type) ? curr.type : "text",
+      content: "",
+      checked: false,
     };
-    const next = [...blocks]; next.splice(idx + 1, 0, newBlock);
-    setBlocks(next); setFocusedId(newBlock.id);
+    const next = [...blocks];
+    next.splice(idx + 1, 0, nb);
+    setBlocks(next);
+    setFocusedId(nb.id);
   };
 
   const backspaceEmpty = (id: string) => {
     if (blocks.length <= 1) return;
     markDirty();
-    const idx  = blocks.findIndex(b => b.id === id);
+    const idx = blocks.findIndex((b) => b.id === id);
     const prev = blocks[idx - 1];
-    setBlocks(blocks.filter(b => b.id !== id));
+    setBlocks(blocks.filter((b) => b.id !== id));
     if (prev) setFocusedId(prev.id);
   };
 
   const toggleCheck = (id: string) => {
     markDirty();
-    setBlocks(prev => prev.map(b => b.id === id ? { ...b, checked: !b.checked } : b));
+    setBlocks((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, checked: !b.checked } : b)),
+    );
+  };
+
+  /** Xóa block bất kỳ (dùng cho media) */
+  const deleteBlock = (id: string) => {
+    markDirty();
+    setBlocks((prev) => prev.filter((b) => b.id !== id));
   };
 
   const applySlashCommand = (type: BlockType) => {
     if (!slashBlockId) return;
+    // Media types → mở picker, đừng tạo block text
+    if (type === "image") {
+      setSlashVisible(false);
+      pickImage();
+      return;
+    }
+    if (type === "video") {
+      setSlashVisible(false);
+      pickVideo();
+      return;
+    }
+    if (type === "audio") {
+      setSlashVisible(false);
+      pickAudio();
+      return;
+    }
+    if (type === "file") {
+      setSlashVisible(false);
+      pickFile();
+      return;
+    }
+
     markDirty();
-    setBlocks(prev => prev.map(b => {
-      if (b.id !== slashBlockId) return b;
-      const si = b.content.lastIndexOf('/');
-      return { ...b, type, content: si >= 0 ? b.content.slice(0, si) : b.content };
-    }));
-    setSlashVisible(false); setSlashBlockId(null); setSlashQuery('');
+    setBlocks((prev) =>
+      prev.map((b) => {
+        if (b.id !== slashBlockId) return b;
+        const si = b.content.lastIndexOf("/");
+        return {
+          ...b,
+          type,
+          content: si >= 0 ? b.content.slice(0, si) : b.content,
+        };
+      }),
+    );
+    setSlashVisible(false);
+    setSlashBlockId(null);
+    setSlashQuery("");
   };
 
-  const applyFormat = (type: BlockType | 'divider') => {
+  const applyFormat = (type: BlockType | "divider") => {
     markDirty();
-    if (type === 'divider') {
-      const nb: Block = { id: uid(), type: 'divider', content: '' };
+    if (type === "divider") {
+      const nb: Block = { id: uid(), type: "divider", content: "" };
       if (focusedId) {
-        const idx = blocks.findIndex(b => b.id === focusedId);
-        const next = [...blocks]; next.splice(idx + 1, 0, nb); setBlocks(next);
-      } else setBlocks(prev => [...prev, nb]);
+        const idx = blocks.findIndex((b) => b.id === focusedId);
+        const next = [...blocks];
+        next.splice(idx + 1, 0, nb);
+        setBlocks(next);
+      } else setBlocks((prev) => [...prev, nb]);
       return;
     }
     if (!focusedId) {
-      const nb: Block = { id: uid(), type, content: '' };
-      setBlocks(prev => [...prev, nb]); setFocusedId(nb.id); return;
+      const nb: Block = { id: uid(), type, content: "" };
+      setBlocks((prev) => [...prev, nb]);
+      setFocusedId(nb.id);
+      return;
     }
-    setBlocks(prev => prev.map(b =>
-      b.id === focusedId ? { ...b, type: b.type === type ? 'text' : type } : b
-    ));
+    setBlocks((prev) =>
+      prev.map((b) =>
+        b.id === focusedId
+          ? { ...b, type: b.type === type ? "text" : type }
+          : b,
+      ),
+    );
   };
 
-  // ── Tags ──────────────────────────────────────────────────────────────────
+  // ── Tags ───────────────────────────────────────────────────────────────────
 
   const addTag = () => {
-    const t = tagInput.trim().replace(/^#/, '').toLowerCase();
-    if (t && !tags.includes(t)) { setTags(prev => [...prev, t]); markDirty(); }
-    setTagInput(''); setShowTagInput(false);
+    const t = tagInput.trim().replace(/^#/, "").toLowerCase();
+    if (t && !tags.includes(t)) {
+      setTags((prev) => [...prev, t]);
+      markDirty();
+    }
+    setTagInput("");
+    setShowTagInput(false);
   };
-
   const removeTag = (t: string) => {
-    setTags(prev => prev.filter(x => x !== t)); markDirty();
+    setTags((prev) => prev.filter((x) => x !== t));
+    markDirty();
   };
 
-  // ── Loading ───────────────────────────────────────────────────────────────
+  // ── Numbered index ─────────────────────────────────────────────────────────
+
+  const numberedIndexMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    let count = 0;
+    for (const b of blocks) {
+      if (b.type === "numbered") {
+        map[b.id] = ++count;
+      } else {
+        count = 0;
+      }
+    }
+    return map;
+  }, [blocks]);
+
+  // ── Loading ────────────────────────────────────────────────────────────────
 
   if (noteLoading) {
     return (
@@ -391,265 +697,324 @@ export default function EditScreen({ route, navigation }: Props) {
     );
   }
 
-  const focusedBlock    = blocks.find(b => b.id === focusedId);
-  const markdownContent = blocksToText(blocks);
+  const focusedBlock = blocks.find((b) => b.id === focusedId);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={s.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={s.container} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-
-        {/* ── TOP BAR ────────────────────────────────────────────────────── */}
+        {/* ── TOP BAR ──────────────────────────────────────────────────────── */}
         <View style={s.topBar}>
           <TouchableOpacity
-            style={s.backBtn} onPress={() => navigation.goBack()}
+            style={s.backBtn}
+            onPress={() => navigation.goBack()}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="chevron-back" size={24} color={COLORS.accent} />
             <Text style={s.backLabel}>Ghi chú</Text>
+            <Animated.View style={[s.unsavedDot, { opacity: unsavedDot }]} />
           </TouchableOpacity>
 
           <View style={s.topCenter} pointerEvents="none">
-            {saving
-              ? <ActivityIndicator size="small" color={COLORS.textDim} />
-              : <>
-                  <Animated.Text style={[s.savedBadge, { opacity: savedOpacity }]}>✓ Đã lưu</Animated.Text>
-                  <Text style={s.dateText}>{note ? fmtDate(note.updated_at) : 'Ghi chú mới'}</Text>
-                </>
-            }
+            {saving ? (
+              <ActivityIndicator size="small" color={COLORS.textDim} />
+            ) : (
+              <>
+                <Animated.Text
+                  style={[s.savedBadge, { opacity: savedOpacity }]}
+                >
+                  ✓ Đã lưu
+                </Animated.Text>
+                <Text style={s.dateText}>
+                  {note ? fmtDate(note.updated_at) : "Ghi chú mới"}
+                </Text>
+              </>
+            )}
           </View>
 
           <View style={s.topRight}>
-            {/* Toggle extracted panel — chỉ hiện khi có data */}
             {extracted && (
-              <TouchableOpacity style={s.topBtn} onPress={() => setShowExtracted(v => !v)}>
+              <TouchableOpacity
+                style={s.topBtn}
+                onPress={() => setShowExtracted((v) => !v)}
+              >
                 <Ionicons
-                  name="sparkles-outline" size={19}
+                  name="sparkles-outline"
+                  size={19}
                   color={showExtracted ? COLORS.accent : COLORS.textMuted}
                 />
               </TouchableOpacity>
             )}
-
-            {/* Re-run AI analyze */}
             {!isNew && (
-              <TouchableOpacity style={s.topBtn} onPress={handleAnalyze} disabled={analyzing}>
-                {analyzing
-                  ? <ActivityIndicator size="small" color={COLORS.accent} />
-                  : <Ionicons name="sparkles" size={19} color={COLORS.accent} />
-                }
+              <TouchableOpacity
+                style={s.topBtn}
+                onPress={handleAnalyze}
+                disabled={analyzing}
+              >
+                {analyzing ? (
+                  <ActivityIndicator size="small" color={COLORS.accent} />
+                ) : (
+                  <Ionicons name="sparkles" size={19} color={COLORS.accent} />
+                )}
               </TouchableOpacity>
             )}
-
             {!isNew && (
               <TouchableOpacity style={s.topBtn} onPress={handleShare}>
-                <Ionicons name="share-outline" size={19} color={COLORS.textMuted} />
+                <Ionicons
+                  name="share-outline"
+                  size={19}
+                  color={COLORS.textMuted}
+                />
               </TouchableOpacity>
             )}
-
             <TouchableOpacity style={s.topBtn} onPress={handleDelete}>
               <Ionicons name="trash-outline" size={19} color={COLORS.danger} />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* ── SCROLL CONTENT ─────────────────────────────────────────────── */}
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={s.editorPad}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Media preview */}
-          {note?.type === 'image' && (note as any).file_url && (
-            <Image source={{ uri: (note as any).file_url }} style={s.mediaImg} resizeMode="cover" />
-          )}
-          {note?.type === 'voice' && (note as any).file_url && (
-            <View style={s.audioChip}>
-              <Ionicons name="mic" size={16} color={COLORS.accent} />
-              <Text style={s.audioLabel}>Ghi âm · nhấn để nghe</Text>
-            </View>
-          )}
-
-          {/* AI Extracted Info Panel */}
-          {showExtracted && extracted && (
-            <View style={s.extractedCard}>
-              <Text style={s.extractedTitle}>🤖 Thông tin AI trích xuất</Text>
-              {extracted.person_name   && <ExtractedRow icon="👤" value={extracted.person_name} />}
-              {extracted.phone         && <ExtractedRow icon="📞" value={extracted.phone} />}
-              {extracted.email         && <ExtractedRow icon="✉️" value={extracted.email} />}
-              {extracted.organization  && <ExtractedRow icon="🏢" value={extracted.organization} />}
-              {extracted.address       && <ExtractedRow icon="📍" value={extracted.address} />}
-              {extracted.event_title   && (
-                <ExtractedRow icon="📅" value={
-                  extracted.event_title +
-                  (extracted.event_time
-                    ? `  ·  ${new Date(extracted.event_time).toLocaleString('vi-VN')}`
-                    : '')
-                } />
-              )}
-              {extracted.deadline && (
-                <ExtractedRow icon="⏰"
-                  value={`Deadline: ${new Date(extracted.deadline).toLocaleDateString('vi-VN')}`}
-                />
-              )}
-              {extracted.action_items && extracted.action_items !== '[]' && (
-                <ExtractedRow icon="✅"
-                  value={(JSON.parse(extracted.action_items) as string[]).join(' · ')}
-                />
-              )}
-            </View>
-          )}
-
-          {/* ── Title ── */}
-          {isEditing ? (
-            <TextInput
-              ref={titleRef}
-              style={s.titleInput}
-              value={title}
-              onChangeText={t => { setTitle(t); markDirty(); }}
-              placeholder="Tiêu đề"
-              placeholderTextColor={COLORS.textDim}
-              multiline returnKeyType="next" blurOnSubmit
-              onSubmitEditing={() => { if (blocks[0]) setFocusedId(blocks[0].id); }}
-            />
-          ) : (
-            <TouchableOpacity onPress={() => setIsEditing(true)} activeOpacity={0.8}>
-              <Text style={[s.titleInput, !title && { color: COLORS.textDim }]}>
-                {title || 'Tiêu đề'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* ── Tags ── */}
-          <View style={s.tagsRow}>
-            {tags.map(t => (
-              <TouchableOpacity
-                key={t} style={s.tagChip}
-                onPress={() => { if (isEditing) removeTag(t); }}
-                activeOpacity={0.7}
-              >
-                <Text style={s.tagChipText}>#{t}</Text>
-                {isEditing && <Text style={s.tagChipX}> ✕</Text>}
-              </TouchableOpacity>
-            ))}
-            {isEditing && (
-              <TouchableOpacity style={s.tagAddBtn} onPress={() => setShowTagInput(v => !v)}>
-                <Ionicons name="pricetag-outline" size={11} color={COLORS.textDim} />
-                <Text style={s.tagAddText}>tag</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {showTagInput && isEditing && (
-            <View style={s.tagInputRow}>
+        {/* ── CONTENT ──────────────────────────────────────────────────────── */}
+        {isEditing ? (
+          <>
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={s.editorPad}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Title */}
               <TextInput
-                style={s.tagField} value={tagInput} onChangeText={setTagInput}
-                placeholder="#tên-tag" placeholderTextColor={COLORS.textDim}
-                onSubmitEditing={addTag} returnKeyType="done"
-                autoCapitalize="none" autoFocus
+                ref={titleRef}
+                style={s.titleInput}
+                value={title}
+                onChangeText={(t) => {
+                  setTitle(t);
+                  markDirty();
+                }}
+                placeholder="Tiêu đề"
+                placeholderTextColor={COLORS.textDim}
+                multiline
+                returnKeyType="next"
+                blurOnSubmit
+                onSubmitEditing={() => blocks[0] && setFocusedId(blocks[0].id)}
               />
-              <TouchableOpacity style={s.tagConfirmBtn} onPress={addTag}>
-                <Text style={s.tagConfirmText}>Thêm</Text>
-              </TouchableOpacity>
-            </View>
-          )}
 
-          <View style={s.hairline} />
+              {/* Tags */}
+              <View style={s.tagsRow}>
+                {tags.map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    style={s.tagChip}
+                    onPress={() => removeTag(t)}
+                  >
+                    <Text style={s.tagChipText}>#{t}</Text>
+                    <Text style={s.tagChipX}> ✕</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={s.tagAddBtn}
+                  onPress={() => setShowTagInput((v) => !v)}
+                >
+                  <Ionicons
+                    name="pricetag-outline"
+                    size={11}
+                    color={COLORS.textDim}
+                  />
+                  <Text style={s.tagAddText}>tag</Text>
+                </TouchableOpacity>
+              </View>
 
-          {/* ── CONTENT: Edit mode vs View mode ── */}
-          {isEditing ? (
-            <>
-              {blocks.map((block, index) => (
+              {showTagInput && (
+                <View style={s.tagInputRow}>
+                  <TextInput
+                    style={s.tagField}
+                    value={tagInput}
+                    onChangeText={setTagInput}
+                    placeholder="#tên-tag"
+                    placeholderTextColor={COLORS.textDim}
+                    onSubmitEditing={addTag}
+                    returnKeyType="done"
+                    autoCapitalize="none"
+                    autoFocus
+                  />
+                  <TouchableOpacity style={s.tagConfirmBtn} onPress={addTag}>
+                    <Text style={s.tagConfirmText}>Thêm</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <View style={s.hairline} />
+
+              {/* Blocks */}
+              {blocks.map((block) => (
                 <BlockItem
-                  key={block.id} block={block} index={index}
+                  key={block.id}
+                  block={block}
+                  numberedIndex={numberedIndexMap[block.id] ?? 0}
                   isFocused={focusedId === block.id}
-                  onChangeText={changeBlockText} onFocus={setFocusedId}
-                  onEnterPress={enterPress} onBackspace={backspaceEmpty}
+                  onChangeText={changeBlockText}
+                  onFocus={setFocusedId}
+                  onEnterPress={enterPress}
+                  onBackspace={backspaceEmpty}
                   onToggleCheck={toggleCheck}
+                  onDelete={deleteBlock}
                 />
               ))}
-              <TouchableOpacity
-                style={s.tapZone} activeOpacity={1}
-                onPress={() => { const last = blocks[blocks.length - 1]; if (last) setFocusedId(last.id); }}
-              />
-            </>
-          ) : (
-            // View mode — tap để switch sang edit
-            <TouchableOpacity
-              style={s.markdownWrapper}
-              activeOpacity={1}
-              onPress={() => setIsEditing(true)}
-            >
-              <MarkdownDisplay style={mdStyles}>
-                {markdownContent || '_Nhấn để bắt đầu viết..._'}
-              </MarkdownDisplay>
-            </TouchableOpacity>
-          )}
-        </ScrollView>
 
-        {slashVisible && (
-          <SlashMenu query={slashQuery} onSelect={applySlashCommand} onClose={() => setSlashVisible(false)} />
+              <TouchableOpacity
+                style={s.tapZone}
+                activeOpacity={1}
+                onPress={() => {
+                  const last = blocks[blocks.length - 1];
+                  if (last) setFocusedId(last.id);
+                }}
+              />
+            </ScrollView>
+
+            {slashVisible && (
+              <SlashMenu
+                query={slashQuery}
+                onSelect={applySlashCommand}
+                onClose={() => setSlashVisible(false)}
+              />
+            )}
+          </>
+        ) : (
+          // VIEW MODE
+          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+            <MarkdownViewer
+              title={title}
+              tags={tags}
+              content={rawMarkdown}
+              extractedInfo={showExtracted ? (extracted ?? null) : null}
+              // ✅ Fix: build URL từ file_path, không dùng file_url
+              mediaUrl={buildFileUrl(note?.file_path)}
+              mediaType={note?.type}
+              onPress={() => setIsEditing(true)}
+              onLinkPress={(url) => Linking.openURL(url).catch(() => {})}
+              onCheckboxToggle={handleCheckboxToggle}
+              showWordCount
+              paddingHorizontal={16}
+            />
+          </ScrollView>
         )}
 
-        {/* ── BOTTOM TOOLBAR — chỉ hiện khi đang edit ── */}
+        {/* ── TOOLBAR 2 TẦNG — chỉ khi edit mode ──────────────────────────── */}
         {isEditing && (
           <View style={s.toolbar}>
-            <ScrollView
-              horizontal showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.toolbarItems}
-              keyboardShouldPersistTaps="always"
-            >
-              {TOOLBAR_ITEMS.map(item => {
-                const active = focusedBlock?.type === item.id;
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[s.toolBtn, active && s.toolBtnActive]}
-                    onPress={() => applyFormat(item.id as BlockType | 'divider')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[s.toolBtnText, active && s.toolBtnTextActive]}>{item.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <View style={s.toolSep} />
-            <View style={s.toolRight}>
-              <TouchableOpacity style={s.toolIconBtn} onPress={handleAttach}>
-                <Ionicons name="attach" size={21} color={COLORS.textMuted} />
-              </TouchableOpacity>
+            {/* Tầng 1: Format buttons (scroll ngang) */}
+            <View style={s.toolRow1}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.toolRow1Items}
+                keyboardShouldPersistTaps="always"
+              >
+                {FORMAT_ITEMS.map((item) => {
+                  const active = focusedBlock?.type === item.id;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={[s.formatBtn, active && s.formatBtnActive]}
+                      onPress={() =>
+                        applyFormat(item.id as BlockType | "divider")
+                      }
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          s.formatBtnText,
+                          active && s.formatBtnTextActive,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Tầng 2: Media + Save */}
+            <View style={s.toolRow2}>
+              {/* Media buttons */}
+              <View style={s.mediaButtons}>
+                <TouchableOpacity
+                  style={s.mediaBtn}
+                  onPress={pickImage}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="image-outline"
+                    size={20}
+                    color={COLORS.textMuted}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={s.mediaBtn}
+                  onPress={pickAudio}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="mic-outline"
+                    size={20}
+                    color={COLORS.textMuted}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={s.mediaBtn}
+                  onPress={pickVideo}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="videocam-outline"
+                    size={20}
+                    color={COLORS.textMuted}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={s.mediaBtn}
+                  onPress={pickFile}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="attach-outline"
+                    size={20}
+                    color={COLORS.textMuted}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* Separator */}
+              <View style={s.toolSep} />
+
+              {/* Save button */}
               <TouchableOpacity
-                style={[s.doneBtn, saving && s.doneBtnDim]}
-                onPress={() => { if (saveTimer.current) clearTimeout(saveTimer.current); doSave(true); }}
+                style={[s.saveBtn, saving && s.saveBtnDim]}
+                onPress={() => {
+                  if (saveTimer.current) clearTimeout(saveTimer.current);
+                  doSave(true);
+                }}
                 disabled={saving}
               >
-                {saving
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <Text style={s.doneBtnText}>Lưu</Text>
-                }
+                {saving ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={s.saveBtnText}>Lưu</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         )}
-
       </KeyboardAvoidingView>
     </SafeAreaView>
-  );
-}
-
-// ── Sub-component: ExtractedRow ───────────────────────────────────────────────
-
-function ExtractedRow({ icon, value }: { icon: string; value: string }) {
-  return (
-    <View style={s.extractedRow}>
-      <Text style={s.extractedIcon}>{icon}</Text>
-      <Text style={s.extractedValue}>{value}</Text>
-    </View>
   );
 }
 
@@ -657,112 +1022,203 @@ function ExtractedRow({ icon, value }: { icon: string; value: string }) {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  centered:  { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
 
+  // Top bar
   topBar: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 8, paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.border,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
   },
-  backBtn:   { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, gap: 2, minWidth: 80 },
-  backLabel: { fontSize: 16, color: COLORS.accent, fontWeight: '400' },
-  topCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  dateText:  { fontSize: 12, color: COLORS.textDim },
-  savedBadge: { fontSize: 12, color: COLORS.success, fontWeight: '600', position: 'absolute' },
-  topRight:  { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 80, justifyContent: 'flex-end' },
+  backBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    gap: 2,
+    minWidth: 80,
+  },
+  backLabel: { fontSize: 16, color: COLORS.accent },
+  unsavedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.warning,
+    marginLeft: 4,
+  },
+  topCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
+  dateText: { fontSize: 12, color: COLORS.textDim },
+  savedBadge: {
+    fontSize: 12,
+    color: COLORS.success,
+    fontWeight: "600",
+    position: "absolute",
+  },
+  topRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 80,
+    justifyContent: "flex-end",
+  },
   topBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: COLORS.surface,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
   },
 
+  // Editor
   editorPad: { paddingBottom: 24 },
-  mediaImg:  { width: '100%', height: 220, marginBottom: 16 },
-
-  audioChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginHorizontal: 16, marginBottom: 12,
-    backgroundColor: COLORS.surface, borderRadius: 10,
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border,
-  },
-  audioLabel: { fontSize: 13, color: COLORS.textMuted },
-
-  extractedCard: {
-    marginHorizontal: 16, marginBottom: 12,
-    backgroundColor: COLORS.surface, borderRadius: 12, padding: 14,
-    borderWidth: 1, borderColor: COLORS.accent + '40',
-  },
-  extractedTitle: { fontSize: 12, color: COLORS.accent, fontWeight: '700', marginBottom: 10 },
-  extractedRow:   { flexDirection: 'row', gap: 8, marginBottom: 6, alignItems: 'flex-start' },
-  extractedIcon:  { fontSize: 14, width: 22 },
-  extractedValue: { flex: 1, fontSize: 13, color: COLORS.text, lineHeight: 20 },
-
   titleInput: {
-    fontSize: 28, fontWeight: '800', color: COLORS.text,
-    lineHeight: 36, letterSpacing: -0.5,
-    paddingHorizontal: 16, paddingVertical: 8,
+    fontSize: 28,
+    fontWeight: "800",
+    color: COLORS.text,
+    lineHeight: 36,
+    letterSpacing: -0.5,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-
   tagsRow: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 6,
-    paddingHorizontal: 16, paddingBottom: 8, minHeight: 28,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    minHeight: 28,
   },
   tagChip: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: COLORS.active, borderRadius: 20,
-    paddingHorizontal: 10, paddingVertical: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.active,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  tagChipText: { fontSize: 12, color: COLORS.accent, fontWeight: '600' },
-  tagChipX:    { fontSize: 10, color: COLORS.accent, opacity: 0.6 },
+  tagChipText: { fontSize: 12, color: COLORS.accent, fontWeight: "600" },
+  tagChipX: { fontSize: 10, color: COLORS.accent, opacity: 0.6 },
   tagAddBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    borderRadius: 20,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
   },
   tagAddText: { fontSize: 12, color: COLORS.textDim },
   tagInputRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 16, paddingBottom: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
   },
   tagField: {
-    flex: 1, height: 36, backgroundColor: COLORS.surface,
-    borderRadius: 10, borderWidth: 1, borderColor: COLORS.border,
-    paddingHorizontal: 12, fontSize: 13, color: COLORS.text,
+    flex: 1,
+    height: 36,
+    backgroundColor: COLORS.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    color: COLORS.text,
   },
-  tagConfirmBtn:  { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: COLORS.accent, borderRadius: 10 },
-  tagConfirmText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  tagConfirmBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: COLORS.accent,
+    borderRadius: 10,
+  },
+  tagConfirmText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  hairline: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.border,
+    marginBottom: 8,
+  },
+  tapZone: { minHeight: 160 },
 
-  hairline:        { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.border, marginBottom: 8 },
-  markdownWrapper: { paddingHorizontal: 16, paddingBottom: 40, minHeight: 200 },
-  tapZone:         { minHeight: 160 },
-
+  // ── Toolbar 2 tầng ────────────────────────────────────────────────────────────
   toolbar: {
-    flexDirection: 'row', alignItems: 'center',
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
     backgroundColor: COLORS.background,
-    paddingHorizontal: 8, paddingVertical: 8, gap: 8,
   },
-  toolbarItems:    { alignItems: 'center', gap: 4 },
-  toolBtn: {
-    width: 36, height: 36, borderRadius: 9,
-    alignItems: 'center', justifyContent: 'center',
+
+  // Tầng 1: format buttons
+  toolRow1: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  toolRow1Items: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 4,
+    alignItems: "center",
+  },
+  formatBtn: {
+    minWidth: 36,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
     backgroundColor: COLORS.surface,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
   },
-  toolBtnActive:     { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  toolBtnText:       { fontSize: 13, fontWeight: '700', color: COLORS.textMuted },
-  toolBtnTextActive: { color: '#fff' },
-  toolSep:    { width: StyleSheet.hairlineWidth, height: 28, backgroundColor: COLORS.border },
-  toolRight:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  toolIconBtn: {
-    width: 36, height: 36, borderRadius: 9,
-    alignItems: 'center', justifyContent: 'center',
+  formatBtnActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  formatBtnText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
+  formatBtnTextActive: { color: "#fff" },
+
+  // Tầng 2: media + save
+  toolRow2: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  mediaButtons: {
+    flexDirection: "row",
+    gap: 2,
+    flex: 1,
+  },
+  mediaBtn: {
+    width: 40,
+    height: 36,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: COLORS.surface,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
   },
-  doneBtn:     { height: 36, paddingHorizontal: 16, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.accent },
-  doneBtnDim:  { opacity: 0.5 },
-  doneBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  toolSep: {
+    width: StyleSheet.hairlineWidth,
+    height: 28,
+    backgroundColor: COLORS.border,
+    marginHorizontal: 6,
+  },
+  saveBtn: {
+    height: 36,
+    paddingHorizontal: 20,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.accent,
+  },
+  saveBtnDim: { opacity: 0.5 },
+  saveBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 });
