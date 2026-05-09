@@ -1,31 +1,13 @@
-// src/types/index.ts
-
-// ── Note ──────────────────────────────────────────────────────────────────────
-
-export interface NoteAttachment {
-  id: number;
-  note_id: number;
-  type: "image" | "voice" | "video" | "file";
-  file_path: string;
-  file_name?: string;
-  mime_type?: string;
-  file_size?: number;
-  duration?: number;
-  width?: number;
-  height?: number;
-  caption?: string;
-  display_order?: number;
-  created_at: string;
-}
-
 export interface Note {
   id: number;
   title?: string;
   content: string;
+  content_json?: string;
   summary?: string;
-  type: "text" | "image" | "voice" | "video" | "file";
-  file_path?: string; // relative: "uploads/images/xxx.jpg"
-  tags: string; // JSON string
+  type: "text" | "image" | "voice" | "video";
+  file_path?: string;
+  file_url?: string;
+  tags: string;
   source_url?: string;
   location?: string;
   is_pinned: number;
@@ -33,93 +15,47 @@ export interface Note {
   ai_processed: number;
   created_at: string;
   updated_at: string;
-  attachments?: NoteAttachment[];
 }
-
-// ── Reminder ──────────────────────────────────────────────────────────────────
 
 export interface Reminder {
   id: number;
   note_id?: number;
   title: string;
+  body?: string;
   remind_at: string;
+  repeat_type?: string;
   is_done: number;
+  created_at: string;
+  note_title?: string;
+}
+
+export interface FileAttachment {
+  id: string;
+  name: string;
+  uri: string;
+  mimeType?: string;
+  size?: number;
+  uploaded: boolean;
+  remoteUrl?: string;
+}
+
+// Kiểu trả về từ backend (bảng note_attachments)
+export interface NoteAttachment {
+  id: number;
+  note_id: number;
+  file_name: string;
+  file_path: string;
+  file_url: string;
+  mime_type?: string;
+  file_group: "image" | "audio" | "video" | "document";
+  file_size?: number;
   created_at: string;
 }
 
-// ── Block ─────────────────────────────────────────────────────────────────────
-
-export type BlockType =
-  | "text"
-  | "heading1"
-  | "heading2"
-  | "heading3"
-  | "bullet"
-  | "numbered"
-  | "checkbox"
-  | "quote"
-  | "divider"
-  // ── Media blocks ─────────────────────────────────────
-  | "image" // ảnh — chọn từ thư viện hoặc chụp
-  | "audio" // ghi âm — từ expo-av
-  | "video" // video — từ thư viện
-  | "file"; // file tuỳ loại — pdf, docx, ...
-
-export interface Block {
-  id: string;
-  type: BlockType;
-  content: string; // text content (empty string với media blocks)
-  checked?: boolean; // chỉ dùng cho checkbox
-
-  // ── Media fields (chỉ dùng với image | audio | video | file) ─────────────
-  /** URI local từ picker / recorder. Dùng để hiển thị trước khi upload */
-  uri?: string;
-  /** Tên file gốc, vd: "photo-2026.jpg", "recording.m4a", "report.pdf" */
-  fileName?: string;
-  /** MIME type, vd: "image/jpeg", "audio/x-m4a", "application/pdf" */
-  mimeType?: string;
-  /** Kích thước file (bytes) */
-  fileSize?: number;
-  /** Duration (ms) — chỉ dùng cho audio / video */
-  duration?: number;
-  /** Width / height — chỉ dùng cho image */
-  width?: number;
-  height?: number;
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
 }
-
-// ── Slash commands ────────────────────────────────────────────────────────────
-
-export interface SlashCommand {
-  id: BlockType;
-  label: string;
-  icon: string;
-  desc: string;
-}
-
-export const SLASH_COMMANDS: SlashCommand[] = [
-  // Text formatting
-  { id: "text", icon: "¶", label: "Đoạn văn", desc: "Văn bản thông thường" },
-  { id: "heading1", icon: "H1", label: "Tiêu đề lớn", desc: "Cỡ chữ lớn nhất" },
-  { id: "heading2", icon: "H2", label: "Tiêu đề vừa", desc: "Cỡ chữ vừa" },
-  { id: "heading3", icon: "H3", label: "Tiêu đề nhỏ", desc: "Cỡ chữ nhỏ" },
-  { id: "bullet", icon: "•", label: "Danh sách", desc: "Danh sách dấu chấm" },
-  {
-    id: "numbered",
-    icon: "1.",
-    label: "Danh sách số",
-    desc: "Danh sách đánh số",
-  },
-  { id: "checkbox", icon: "☐", label: "Checklist", desc: "Ô checkbox" },
-  { id: "quote", icon: '"', label: "Trích dẫn", desc: "Highlight nổi bật" },
-  { id: "divider", icon: "—", label: "Đường kẻ", desc: "Phân cách nội dung" },
-  // Media
-  { id: "image", icon: "🖼️", label: "Ảnh", desc: "Chèn ảnh từ thư viện" },
-  { id: "audio", icon: "🎙️", label: "Ghi âm", desc: "Ghi âm và chèn vào" },
-  { id: "video", icon: "🎬", label: "Video", desc: "Chèn video từ thư viện" },
-  { id: "file", icon: "📎", label: "File đính kèm", desc: "Đính kèm tài liệu" },
-];
-
-// ── Navigation ────────────────────────────────────────────────────────────────
 
 export type RootStackParamList = {
   HomeList: undefined;
@@ -128,12 +64,10 @@ export type RootStackParamList = {
 
 export type RootTabParamList = {
   Home: undefined;
-  Capture: undefined;
   Search: undefined;
+  Chat: undefined;
   Reminders: undefined;
 };
-
-// ── Component props ────────────────────────────────────────────────────────────
 
 export interface NoteCardProps {
   note: Note;
@@ -141,56 +75,35 @@ export interface NoteCardProps {
   onDelete?: () => void;
   onHold?: () => void;
 }
-
 export interface TagPillProps {
   label: string;
   color?: string;
 }
-
 export interface EmptyStateProps {
   message: string;
   icon?: string;
 }
-
-export interface LoadingSpinnerProps {
-  size?: "small" | "large";
-  color?: string;
-}
-
-export interface ApiError {
-  error: string;
-}
-
-export interface DeleteResponse {
-  message: string;
-  id: number;
-}
-
 export interface ErrorProps {
   value?: string;
   onReload: () => Promise<void>;
 }
-
 export interface HomeHeaderProps {
   total: number;
   loading: boolean;
   onAddPress: () => void;
 }
-
 export interface HomeSearchSection {
   value: string;
-  onChange: (text: string) => void;
+  onChange: (t: string) => void;
 }
 
 export const FILTER_TYPES = [
-  { key: "all", label: "Tất cả" },
-  { key: "text", label: "Ghi chú" },
-  { key: "image", label: "Ảnh" },
-  { key: "voice", label: "Giọng nói" },
+  { key: "all", label: "Tat ca" },
+  { key: "text", label: "Ghi chu" },
+  { key: "image", label: "Anh" },
+  { key: "voice", label: "Giong noi" },
   { key: "video", label: "Video" },
-  { key: "file", label: "File" },
 ] as const;
-
 export type FilterKey = (typeof FILTER_TYPES)[number]["key"];
 
 export interface NotesListProps {
@@ -204,12 +117,37 @@ export interface NotesListProps {
   filter: FilterKey;
 }
 
-// ── Capture ────────────────────────────────────────────────────────────────────
+export type BlockType =
+  | "text"
+  | "heading1"
+  | "heading2"
+  | "heading3"
+  | "bullet"
+  | "numbered"
+  | "checkbox"
+  | "quote"
+  | "divider";
 
-export interface ActionItem {
-  key: string;
-  icon: React.ReactElement;
-  label: string;
+export interface Block {
+  id: string;
+  type: BlockType;
+  content: string;
+  checked?: boolean;
 }
-
-export type CaptureMode = "note" | "task" | "meeting";
+export interface SlashCommand {
+  id: BlockType;
+  label: string;
+  icon: string;
+  desc: string;
+}
+export const SLASH_COMMANDS: SlashCommand[] = [
+  { id: "text", icon: "P", label: "Doan van", desc: "Van ban thuong" },
+  { id: "heading1", icon: "H1", label: "Tieu de lon", desc: "Co chu lon nhat" },
+  { id: "heading2", icon: "H2", label: "Tieu de vua", desc: "Co chu vua" },
+  { id: "heading3", icon: "H3", label: "Tieu de nho", desc: "Co chu nho" },
+  { id: "bullet", icon: "*", label: "Danh sach", desc: "Dau cham" },
+  { id: "numbered", icon: "1.", label: "So thu tu", desc: "Danh so" },
+  { id: "checkbox", icon: "[]", label: "Checklist", desc: "O checkbox" },
+  { id: "quote", icon: '"', label: "Trich dan", desc: "Highlight" },
+  { id: "divider", icon: "--", label: "Duong ke", desc: "Phan cach" },
+];

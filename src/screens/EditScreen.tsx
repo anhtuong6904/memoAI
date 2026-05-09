@@ -1,13 +1,20 @@
+import {
+  RichText,
+  TenTapStartKit,
+  Toolbar,
+  useEditorBridge,
+  useEditorContent,
+} from "@10play/tentap-editor";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import * as DocumentPicker from "expo-document-picker";
+import { Audio } from "expo-av";
+import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import React, {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -16,10 +23,7 @@ import {
   Alert,
   Animated,
   KeyboardAvoidingView,
-  Linking,
   Platform,
-  ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -28,46 +32,56 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import BlockItem from "../components/Editor/BlockItem";
-import EditTagRow from "../components/Editor/EditTagRow";
-import EditTopBar from "../components/Editor/EditTopbar";
-import SlashMenu from "../components/Editor/SlashMenu";
-import {
-  LIST_TYPES,
-  TOOLBAR_ITEMS,
-  blocksToText,
-  parseTags,
-  textToBlocks,
-  uid,
-} from "../components/Editor/helpers";
-import MarkdownViewer from "../components/MarkdownViewer";
+import FileAttachmentBar from "../components/Editor/FileAttachmentBar";
 import { COLORS } from "../constants/colors";
-import { SERVER_URL } from "../constants/config";
 import { useNoteDetail } from "../hooks/useNotes";
 import {
-  captureFile,
-  captureImage,
-  captureVoice,
-  createNote,
+  analyzeNote,
   deleteNote,
-  reanalyzeNote,
   updateNote,
+  uploadAttachment,
 } from "../services/api";
-import { Block, BlockType, RootStackParamList } from "../types";
+import { FileAttachment, RootStackParamList } from "../types";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Edit">;
 
-/** ✅ Fix: build full URL từ relative file_path */
-const buildFileUrl = (filePath?: string): string | undefined => {
-  if (!filePath) return undefined;
-  // Chuẩn hóa dấu \ → /
-  const normalized = filePath.replace(/\\/g, "/");
-  return `${SERVER_URL}/${normalized}`;
+interface AudioState {
+  uri: string;
+  duration: number;
+  uploaded: boolean;
+}
+
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const fmtDur = (s: number) =>
+  `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+const parseTags = (raw: string): string[] => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// EditScreen
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Convert local image URI -> base64 data URI ──────────────────────────────
+// Tránh dùng file:// trực tiếp trong WebView — base64 hoạt động mọi version
+async function uriToBase64(
+  uri: string,
+  mimeType = "image/jpeg",
+): Promise<string> {
+  const b64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: "base64",
+  });
+  return `data:${mimeType};base64,${b64}`;
+}
 
 export default function EditScreen({ route, navigation }: Props) {
   const noteId = route.params?.noteId;
@@ -77,52 +91,64 @@ export default function EditScreen({ route, navigation }: Props) {
     note,
     extracted,
     loading: noteLoading,
-    reload: reloadNote,
+    reload,
   } = useNoteDetail(noteId);
 
-  // ── State ──────────────────────────────────────────────────────────────────
-  const [isEditing, setIsEditing] = useState(isNew);
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
-  const [showExtracted, setShowExtracted] = useState(false);
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [showTagInput, setShowTagInput] = useState(false);
-  const [rawMarkdown, setRawMarkdown] = useState("");
-  const [blocks, setBlocks] = useState<Block[]>([
-    { id: uid(), type: "text", content: "" },
-  ]);
-  const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [slashVisible, setSlashVisible] = useState(false);
-  const [slashQuery, setSlashQuery] = useState("");
-  const [slashBlockId, setSlashBlockId] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
+  const [showExtracted, setShowExtracted] = useState(false);
+  const [fileAttach, setFileAttach] = useState<FileAttachment[]>([]);
+  const [audioState, setAudioState] = useState<AudioState | null>(null);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recSec, setRecSec] = useState(0);
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const titleRef = useRef<TextInput>(null);
   const isDirty = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const savedOpacity = useRef(new Animated.Value(0)).current;
-  const unsavedDot = useRef(new Animated.Value(0)).current;
 
-  // ── Sync note ──────────────────────────────────────────────────────────────
+  // ── TenTap — v1.x không cần ghi editorHtml ra file system ─────────────
+  const editor = useEditorBridge({
+    autofocus: false,
+    avoidIosKeyboard: true,
+    initialContent: "",
+    bridgeExtensions: TenTapStartKit,
+    onChange: () => markDirty(),
+  });
+  const editorContent = useEditorContent(editor, { type: "html" });
+
+  // ── Sync note -> editor ────────────────────────────────────────────────
   useEffect(() => {
     if (!note) return;
     setTitle(note.title ?? "");
-    setRawMarkdown(note.content ?? "");
     setTags(parseTags(note.tags));
-    setIsEditing(false);
+    const json = (note as any).content_json;
+    if (json) {
+      try {
+        editor.setContent(JSON.parse(json));
+      } catch {}
+    } else if (note.content) {
+      editor.setContent(`<p>${note.content.replace(/\n/g, "</p><p>")}</p>`);
+    }
   }, [note]);
 
   useFocusEffect(
     useCallback(() => {
-      reloadNote();
-    }, [reloadNote]),
+      reload();
+    }, [reload]),
   );
 
   useEffect(() => {
     if (isNew) {
-      const t = setTimeout(() => titleRef.current?.focus(), 350);
+      const t = setTimeout(() => titleRef.current?.focus(), 400);
       return () => clearTimeout(t);
     }
   }, [isNew]);
@@ -132,26 +158,23 @@ export default function EditScreen({ route, navigation }: Props) {
   }, [navigation]);
 
   useEffect(() => {
-    if (isEditing) setBlocks(textToBlocks(rawMarkdown));
-  }, [isEditing]);
-
-  useEffect(() => {
     const unsub = navigation.addListener("beforeRemove", (e) => {
       if (!isDirty.current) return;
       e.preventDefault();
       doSave(false).then(() => navigation.dispatch(e.data.action));
     });
     return unsub;
-  }, [navigation, title, blocks, tags, rawMarkdown]);
+  }, [navigation, title, tags, editorContent]);
 
-  // ── Animations ─────────────────────────────────────────────────────────────
+  useEffect(
+    () => () => {
+      sound?.unloadAsync();
+    },
+    [sound],
+  );
 
-  const flashSaved = () => {
-    Animated.timing(unsavedDot, {
-      toValue: 0,
-      duration: 150,
-      useNativeDriver: true,
-    }).start();
+  // ── Save helpers ───────────────────────────────────────────────────────
+  const flashSaved = () =>
     Animated.sequence([
       Animated.timing(savedOpacity, {
         toValue: 1,
@@ -165,118 +188,53 @@ export default function EditScreen({ route, navigation }: Props) {
         useNativeDriver: true,
       }),
     ]).start();
-  };
 
-  const markDirty = () => {
-    if (!isDirty.current) {
-      isDirty.current = true;
-      Animated.timing(unsavedDot, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
-    }
+  const markDirty = useCallback(() => {
+    isDirty.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => doSave(false), 2500);
-  };
-
-  // ── Save ───────────────────────────────────────────────────────────────────
-
-  const uploadMediaBlocks = useCallback(
-    async (targetNoteId: number) => {
-      const mediaBlocks = blocks.filter(
-        (b) => ["image", "audio", "video", "file"].includes(b.type) && !!b.uri,
-      );
-      for (const block of mediaBlocks) {
-        if (!block.uri) continue;
-        if (block.type === "image") {
-          await captureImage(block.uri, undefined, targetNoteId);
-          continue;
-        }
-        if (block.type === "audio") {
-          await captureVoice(block.uri, undefined, targetNoteId);
-          continue;
-        }
-        await captureFile(
-          block.uri,
-          block.fileName ??
-            `${block.type}-${Date.now()}.${block.type === "video" ? "mp4" : "bin"}`,
-          block.mimeType ??
-            (block.type === "video" ? "video/mp4" : "application/octet-stream"),
-          undefined,
-          targetNoteId,
-        );
-      }
-    },
-    [blocks],
-  );
+    saveTimer.current = setTimeout(() => doSave(false), 1500);
+  }, []);
 
   const doSave = useCallback(
-    async (showSpinner: boolean) => {
-      const content = (isEditing ? blocksToText(blocks) : rawMarkdown).trim();
-      if (!title.trim() && !content) return;
+    async (spinner: boolean) => {
+      const cj =
+        editorContent == null
+          ? ""
+          : typeof editorContent === "string"
+            ? editorContent
+            : JSON.stringify(editorContent); // object → stringify
+      if (!title.trim() && !cj) return;
       try {
-        if (showSpinner) setSaving(true);
-        if (isNew) {
-          const newNote = await createNote(content || " ", title || "");
-          await uploadMediaBlocks(newNote.id);
-          isDirty.current = false;
-          flashSaved();
-          navigation.replace("Edit", { noteId: newNote.id });
-        } else if (note) {
+        if (spinner) setSaving(true);
+        if (note) {
           await updateNote(note.id, {
-            title: title || "",
-            content: content || " ",
+            title,
+            content_json: cj,
             tags: JSON.stringify(tags),
           });
-          await uploadMediaBlocks(note.id);
-          setRawMarkdown(content || " ");
-          isDirty.current = false;
-          flashSaved();
-          setIsEditing(false);
-          reloadNote();
         }
+        isDirty.current = false;
+        flashSaved();
       } catch (e) {
-        if (showSpinner)
-          Alert.alert("Lỗi", e instanceof Error ? e.message : "Lưu thất bại");
+        if (spinner)
+          Alert.alert("Loi", e instanceof Error ? e.message : "Luu that bai");
       } finally {
-        if (showSpinner) setSaving(false);
+        if (spinner) setSaving(false);
       }
     },
-    [
-      blocks,
-      isEditing,
-      isNew,
-      note,
-      rawMarkdown,
-      reloadNote,
-      tags,
-      title,
-      uploadMediaBlocks,
-    ],
+    [editorContent, note, tags, title],
   );
 
-  // ── Checkbox toggle (view mode) ────────────────────────────────────────────
-
-  const handleCheckboxToggle = useCallback(
-    (newMd: string) => {
-      setRawMarkdown(newMd);
-      if (note) updateNote(note.id, { content: newMd }).catch(() => {});
-    },
-    [note],
-  );
-
-  // ── Delete ─────────────────────────────────────────────────────────────────
-
+  // ── Delete ─────────────────────────────────────────────────────────────
   const handleDelete = () => {
     if (isNew) {
       navigation.goBack();
       return;
     }
-    Alert.alert("Xóa ghi chú", "Không thể khôi phục. Tiếp tục?", [
-      { text: "Huỷ", style: "cancel" },
+    Alert.alert("Xoa ghi chu", "Khong the khoi phuc?", [
+      { text: "Huy", style: "cancel" },
       {
-        text: "Xóa",
+        text: "Xoa",
         style: "destructive",
         onPress: async () => {
           if (!note) return;
@@ -288,301 +246,139 @@ export default function EditScreen({ route, navigation }: Props) {
     ]);
   };
 
-  const handleShare = () =>
-    Share.share({ message: `${title}\n\n${rawMarkdown}`.trim() });
-
+  // ── AI Analyze ─────────────────────────────────────────────────────────
   const handleAnalyze = async () => {
     if (!note) return;
     setAnalyzing(true);
     try {
-      await reanalyzeNote(note.id);
-      await reloadNote();
+      await doSave(false);
+      await analyzeNote(note.id);
+      await reload();
       setShowExtracted(true);
     } catch {
-      Alert.alert("Lỗi", "Không thể phân tích. Kiểm tra backend.");
+      Alert.alert("Loi", "Khong the phan tich. Kiem tra backend.");
     } finally {
       setAnalyzing(false);
     }
   };
 
-  // ── Media pickers ──────────────────────────────────────────────────────────
-
-  /** Chèn image block từ thư viện ảnh */
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
+  // ── Image picker — convert to base64 để tránh file:// issue ───────────
+  const handlePickImage = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Can quyen anh");
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.9,
-      allowsEditing: false,
-    });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
-    insertMediaBlock({
-      type: "image",
-      uri: asset.uri,
-      fileName: asset.fileName ?? `photo-${Date.now()}.jpg`,
-      mimeType: asset.mimeType ?? "image/jpeg",
-      fileSize: asset.fileSize,
-      width: asset.width,
-      height: asset.height,
-    });
-  };
-
-  /** Chèn video block từ thư viện */
-  const pickVideo = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       quality: 0.8,
     });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
-    insertMediaBlock({
-      type: "video",
-      uri: asset.uri,
-      fileName: asset.fileName ?? `video-${Date.now()}.mp4`,
-      mimeType: asset.mimeType ?? "video/mp4",
-      fileSize: asset.fileSize,
-      duration: asset.duration ? asset.duration * 1000 : undefined, // s → ms
+    if (res.canceled || !res.assets[0]) return;
+    const asset = res.assets[0];
+    try {
+      // Base64 data URI — hoạt động trong WebView mọi platform
+      const dataUri = await uriToBase64(asset.uri, "image/jpeg");
+      editor.setImage(dataUri);
+      markDirty();
+      // Upload as attachment nếu note đã có id
+      if (noteId) {
+        const att = await uploadAttachment(
+          noteId,
+          asset.uri,
+          `photo_${Date.now()}.jpg`,
+          "image/jpeg",
+        );
+        setFileAttach((prev) => [...prev, att]);
+      }
+    } catch (e) {
+      Alert.alert("Loi", "Khong the them anh.");
+    }
+  };
+
+  // ── Camera ─────────────────────────────────────────────────────────────
+  const handleCamera = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Can quyen camera");
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+    if (res.canceled || !res.assets[0]) return;
+    try {
+      const dataUri = await uriToBase64(res.assets[0].uri, "image/jpeg");
+      editor.setImage(dataUri);
+      markDirty();
+    } catch {
+      Alert.alert("Loi", "Khong the them anh tu camera.");
+    }
+  };
+
+  // ── Audio record ───────────────────────────────────────────────────────
+  const startRec = async () => {
+    const perm = await Audio.requestPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Can quyen micro");
+      return;
+    }
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+    });
+    const { recording: rec } = await Audio.Recording.createAsync(
+      Audio.RecordingOptionsPresets.HIGH_QUALITY,
+    );
+    setRecording(rec);
+    setIsRecording(true);
+    setRecSec(0);
+    recTimer.current = setInterval(() => setRecSec((s) => s + 1), 1000);
+  };
+
+  const stopRec = async () => {
+    if (!recording) return;
+    if (recTimer.current) clearInterval(recTimer.current);
+    await recording.stopAndUnloadAsync();
+    const uri = recording.getURI();
+    if (uri) setAudioState({ uri, duration: recSec, uploaded: false });
+    setRecording(null);
+    setIsRecording(false);
+  };
+
+  const togglePlay = async () => {
+    if (!audioState) return;
+    if (isPlaying && sound) {
+      await sound.pauseAsync();
+      setIsPlaying(false);
+      return;
+    }
+    if (sound) {
+      await sound.playAsync();
+      setIsPlaying(true);
+      return;
+    }
+    const { sound: snd } = await Audio.Sound.createAsync(
+      { uri: audioState.uri },
+      { shouldPlay: true },
+    );
+    setSound(snd);
+    setIsPlaying(true);
+    snd.setOnPlaybackStatusUpdate((st) => {
+      if (st.isLoaded && st.didJustFinish) {
+        setIsPlaying(false);
+        snd.setPositionAsync(0);
+      }
     });
   };
 
-  /** Chèn file block từ document picker */
-  const pickFile = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "*/*",
-        copyToCacheDirectory: true,
-      });
-      if (result.canceled || !result.assets[0]) return;
-      const asset = result.assets[0];
-      insertMediaBlock({
-        type: "file",
-        uri: asset.uri,
-        fileName: asset.name,
-        mimeType: asset.mimeType ?? "application/octet-stream",
-        fileSize: asset.size,
-      });
-    } catch {
-      Alert.alert("Lỗi", "Không thể chọn file.");
-    }
-  };
-
-  /**
-   * Ghi âm — placeholder (cần expo-av để implement đầy đủ).
-   * Hiện tại mở alert, có thể chọn audio từ thư viện.
-   */
-  const pickAudio = async () => {
-    // Option 1: chọn audio file từ thư viện
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "audio/*",
-        copyToCacheDirectory: true,
-      });
-      if (result.canceled || !result.assets[0]) return;
-      const asset = result.assets[0];
-      insertMediaBlock({
-        type: "audio",
-        uri: asset.uri,
-        fileName: asset.name,
-        mimeType: asset.mimeType ?? "audio/x-m4a",
-        fileSize: asset.size,
-      });
-    } catch {
-      Alert.alert("Lỗi", "Không thể chọn audio.");
-    }
-  };
-
-  /** Chèn media block sau block đang focus (hoặc cuối cùng) */
-  const insertMediaBlock = (params: Omit<Block, "id" | "content">) => {
-    markDirty();
-    const newBlock: Block = { id: uid(), content: "", ...params };
-    if (focusedId) {
-      const idx = blocks.findIndex((b) => b.id === focusedId);
-      const next = [...blocks];
-      next.splice(idx + 1, 0, newBlock);
-      setBlocks(next);
-    } else {
-      setBlocks((prev) => [...prev, newBlock]);
-    }
-    // Focus block text mới sau media
-    const textBlock: Block = { id: uid(), type: "text", content: "" };
-    setTimeout(() => {
-      setBlocks((prev) => {
-        const idx = prev.findIndex((b) => b.id === newBlock.id);
-        const next = [...prev];
-        next.splice(idx + 1, 0, textBlock);
-        return next;
-      });
-      setFocusedId(textBlock.id);
-    }, 50);
-  };
-
-  // ── Block editing ──────────────────────────────────────────────────────────
-
-  const changeBlockText = (id: string, text: string) => {
-    markDirty();
-    if (slashVisible && slashBlockId === id) {
-      if (!text.includes("/")) {
-        setSlashVisible(false);
-        setSlashBlockId(null);
-        setSlashQuery("");
-      } else {
-        setSlashQuery(text.slice(text.lastIndexOf("/") + 1));
-      }
-    }
-    if (text.endsWith("/") && !slashVisible) {
-      setSlashBlockId(id);
-      setSlashQuery("");
-      setSlashVisible(true);
-    }
-    setBlocks((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, content: text } : b)),
-    );
-  };
-
-  const enterPress = (id: string) => {
-    markDirty();
-    const idx = blocks.findIndex((b) => b.id === id);
-    const curr = blocks[idx];
-    if (LIST_TYPES.includes(curr.type) && curr.content === "") {
-      setBlocks((prev) =>
-        prev.map((b) => (b.id === id ? { ...b, type: "text" } : b)),
-      );
-      return;
-    }
-    const nb: Block = {
-      id: uid(),
-      type: LIST_TYPES.includes(curr.type) ? curr.type : "text",
-      content: "",
-      checked: false,
-    };
-    const next = [...blocks];
-    next.splice(idx + 1, 0, nb);
-    setBlocks(next);
-    setFocusedId(nb.id);
-  };
-
-  const backspaceEmpty = (id: string) => {
-    if (blocks.length <= 1) return;
-    markDirty();
-    const idx = blocks.findIndex((b) => b.id === id);
-    const prev = blocks[idx - 1];
-    setBlocks(blocks.filter((b) => b.id !== id));
-    if (prev) setFocusedId(prev.id);
-  };
-
-  const toggleCheck = (id: string) => {
-    markDirty();
-    setBlocks((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, checked: !b.checked } : b)),
-    );
-  };
-
-  /** Xóa block bất kỳ (dùng cho media) */
-  const deleteBlock = (id: string) => {
-    markDirty();
-    setBlocks((prev) => prev.filter((b) => b.id !== id));
-  };
-
-  const applySlashCommand = (type: BlockType) => {
-    if (!slashBlockId) return;
-    // Media types → mở picker, đừng tạo block text
-    if (type === "image") {
-      setSlashVisible(false);
-      pickImage();
-      return;
-    }
-    if (type === "video") {
-      setSlashVisible(false);
-      pickVideo();
-      return;
-    }
-    if (type === "audio") {
-      setSlashVisible(false);
-      pickAudio();
-      return;
-    }
-    if (type === "file") {
-      setSlashVisible(false);
-      pickFile();
-      return;
-    }
-
-    markDirty();
-    setBlocks((prev) =>
-      prev.map((b) => {
-        if (b.id !== slashBlockId) return b;
-        const si = b.content.lastIndexOf("/");
-        return {
-          ...b,
-          type,
-          content: si >= 0 ? b.content.slice(0, si) : b.content,
-        };
-      }),
-    );
-    setSlashVisible(false);
-    setSlashBlockId(null);
-    setSlashQuery("");
-  };
-
-  const applyFormat = (type: BlockType | "divider") => {
-    markDirty();
-    if (type === "divider") {
-      const nb: Block = { id: uid(), type: "divider", content: "" };
-      if (focusedId) {
-        const idx = blocks.findIndex((b) => b.id === focusedId);
-        const next = [...blocks];
-        next.splice(idx + 1, 0, nb);
-        setBlocks(next);
-      } else setBlocks((prev) => [...prev, nb]);
-      return;
-    }
-    if (!focusedId) {
-      const nb: Block = { id: uid(), type, content: "" };
-      setBlocks((prev) => [...prev, nb]);
-      setFocusedId(nb.id);
-      return;
-    }
-    setBlocks((prev) =>
-      prev.map((b) =>
-        b.id === focusedId
-          ? { ...b, type: b.type === type ? "text" : type }
-          : b,
-      ),
-    );
-  };
-
-  // ── Tags ───────────────────────────────────────────────────────────────────
-
+  // ── Tags ───────────────────────────────────────────────────────────────
   const addTag = () => {
     const t = tagInput.trim().replace(/^#/, "").toLowerCase();
     if (t && !tags.includes(t)) {
-      setTags((prev) => [...prev, t]);
+      setTags((p) => [...p, t]);
       markDirty();
     }
     setTagInput("");
     setShowTagInput(false);
   };
-  const removeTag = (t: string) => {
-    setTags((prev) => prev.filter((x) => x !== t));
-    markDirty();
-  };
-
-  // ── Numbered index ─────────────────────────────────────────────────────────
-
-  const numberedIndexMap = useMemo(() => {
-    const map: Record<string, number> = {};
-    let count = 0;
-    for (const b of blocks) {
-      if (b.type === "numbered") {
-        map[b.id] = ++count;
-      } else {
-        count = 0;
-      }
-    }
-    return map;
-  }, [blocks]);
-
-  // ── Loading ────────────────────────────────────────────────────────────────
 
   if (noteLoading) {
     return (
@@ -594,251 +390,252 @@ export default function EditScreen({ route, navigation }: Props) {
     );
   }
 
-  const focusedBlock = blocks.find((b) => b.id === focusedId);
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
     <SafeAreaView style={s.container} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
       >
-        <EditTopBar
-          isNew={isNew}
-          saving={saving}
-          analyzing={analyzing}
-          showExtracted={showExtracted}
-          hasExtracted={!!extracted}
-          updatedAt={note?.updated_at}
-          savedOpacity={savedOpacity}
-          unsavedDot={unsavedDot}
-          onBack={() => navigation.goBack()}
-          onToggleExtracted={() => setShowExtracted((v) => !v)}
-          onAnalyze={handleAnalyze}
-          onShare={handleShare}
-          onDelete={handleDelete}
-        />
+        {/* TOP BAR */}
+        <View style={s.topBar}>
+          <TouchableOpacity
+            style={s.backBtn}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chevron-back" size={24} color={COLORS.accent} />
+            <Text style={s.backLabel}>Ghi chu</Text>
+          </TouchableOpacity>
 
-        {/* ── CONTENT ──────────────────────────────────────────────────────── */}
-        {isEditing ? (
-          <>
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={s.editorPad}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              {/* Title */}
-              <TextInput
-                ref={titleRef}
-                style={s.titleInput}
-                value={title}
-                onChangeText={(t) => {
-                  setTitle(t);
-                  markDirty();
-                }}
-                placeholder="Tiêu đề"
-                placeholderTextColor={COLORS.textDim}
-                multiline
-                returnKeyType="next"
-                blurOnSubmit
-                onSubmitEditing={() => blocks[0] && setFocusedId(blocks[0].id)}
-              />
-
-              {/* Tags */}
-              <EditTagRow
-                tags={tags}
-                tagInput={tagInput}
-                showTagInput={showTagInput}
-                setTagInput={setTagInput}
-                setShowTagInput={setShowTagInput}
-                onAddTag={addTag}
-                onRemoveTag={removeTag}
-              />
-
-              <View style={s.hairline} />
-
-              {/* Blocks */}
-              {blocks.map((block) => (
-                <BlockItem
-                  key={block.id}
-                  block={block}
-                  numberedIndex={numberedIndexMap[block.id] ?? 0}
-                  isFocused={focusedId === block.id}
-                  onChangeText={changeBlockText}
-                  onFocus={setFocusedId}
-                  onEnterPress={enterPress}
-                  onBackspace={backspaceEmpty}
-                  onToggleCheck={toggleCheck}
-                  onDelete={deleteBlock}
-                />
-              ))}
-
-              <TouchableOpacity
-                style={s.tapZone}
-                activeOpacity={1}
-                onPress={() => {
-                  const last = blocks[blocks.length - 1];
-                  if (last) setFocusedId(last.id);
-                }}
-              />
-            </ScrollView>
-
-            {slashVisible && (
-              <SlashMenu
-                query={slashQuery}
-                onSelect={applySlashCommand}
-                onClose={() => setSlashVisible(false)}
-              />
+          <View style={s.topCenter} pointerEvents="none">
+            {saving ? (
+              <ActivityIndicator size="small" color={COLORS.textDim} />
+            ) : (
+              <>
+                <Animated.Text
+                  style={[s.savedBadge, { opacity: savedOpacity }]}
+                >
+                  Saved
+                </Animated.Text>
+                <Text style={s.dateText}>
+                  {note ? fmtDate(note.updated_at) : "Ghi chu moi"}
+                </Text>
+              </>
             )}
-          </>
-        ) : (
-          // VIEW MODE
-          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-            <MarkdownViewer
-              title={title}
-              tags={tags}
-              content={rawMarkdown}
-              extractedInfo={showExtracted ? (extracted ?? null) : null}
-              // ✅ Fix: build URL từ file_path, không dùng file_url
-              mediaUrl={buildFileUrl(note?.file_path)}
-              mediaType={note?.type}
-              attachments={(note?.attachments ?? []).map((a) => ({
-                ...a,
-                file_path: buildFileUrl(a.file_path) || a.file_path,
-              }))}
-              onPress={() => setIsEditing(true)}
-              onLinkPress={(url) => Linking.openURL(url).catch(() => {})}
-              onCheckboxToggle={handleCheckboxToggle}
-              showWordCount
-              paddingHorizontal={16}
-            />
-          </ScrollView>
-        )}
+          </View>
 
-        {/* ── TOOLBAR 2 TẦNG — chỉ khi edit mode ──────────────────────────── */}
-        {isEditing && (
-          <View style={s.toolbar}>
-            {/* Tầng 1: Format buttons (scroll ngang) */}
-            <View style={s.toolRow1}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={s.toolRow1Items}
-                keyboardShouldPersistTaps="always"
-              >
-                {TOOLBAR_ITEMS.map((item) => {
-                  const active = focusedBlock?.type === item.id;
-                  return (
-                    <TouchableOpacity
-                      key={item.id}
-                      style={[s.formatBtn, active && s.formatBtnActive]}
-                      onPress={() =>
-                        applyFormat(item.id as BlockType | "divider")
-                      }
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          s.formatBtnText,
-                          active && s.formatBtnTextActive,
-                        ]}
-                      >
-                        {item.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Tầng 2: Media + Save */}
-            <View style={s.toolRow2}>
-              {/* Media buttons */}
-              <View style={s.mediaButtons}>
-                <TouchableOpacity
-                  style={s.mediaBtn}
-                  onPress={pickImage}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name="image-outline"
-                    size={20}
-                    color={COLORS.textMuted}
-                  />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={s.mediaBtn}
-                  onPress={pickAudio}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name="mic-outline"
-                    size={20}
-                    color={COLORS.textMuted}
-                  />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={s.mediaBtn}
-                  onPress={pickVideo}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name="videocam-outline"
-                    size={20}
-                    color={COLORS.textMuted}
-                  />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={s.mediaBtn}
-                  onPress={pickFile}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name="attach-outline"
-                    size={20}
-                    color={COLORS.textMuted}
-                  />
-                </TouchableOpacity>
-              </View>
-
-              {/* Separator */}
-              <View style={s.toolSep} />
-
-              {/* Save button */}
+          <View style={s.topRight}>
+            {!isNew && (
               <TouchableOpacity
-                style={[s.saveBtn, saving && s.saveBtnDim]}
-                onPress={() => {
-                  if (saveTimer.current) clearTimeout(saveTimer.current);
-                  doSave(true);
-                }}
-                disabled={saving}
+                style={s.topBtn}
+                onPress={handleAnalyze}
+                disabled={analyzing}
               >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                {analyzing ? (
+                  <ActivityIndicator size="small" color={COLORS.accent} />
                 ) : (
-                  <Text style={s.saveBtnText}>Lưu</Text>
+                  <Ionicons name="sparkles" size={19} color={COLORS.accent} />
                 )}
               </TouchableOpacity>
-            </View>
+            )}
+            {extracted && (
+              <TouchableOpacity
+                style={s.topBtn}
+                onPress={() => setShowExtracted((v) => !v)}
+              >
+                <Ionicons
+                  name="sparkles-outline"
+                  size={19}
+                  color={showExtracted ? COLORS.accent : COLORS.textMuted}
+                />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[s.topBtn, saving && { opacity: 0.5 }]}
+              onPress={() => doSave(true)}
+              disabled={saving}
+            >
+              <Ionicons name="checkmark" size={19} color={COLORS.accent} />
+            </TouchableOpacity>
+            <TouchableOpacity style={s.topBtn} onPress={handleDelete}>
+              <Ionicons name="trash-outline" size={19} color={COLORS.danger} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* TITLE */}
+        <TextInput
+          ref={titleRef}
+          style={s.titleInput}
+          value={title}
+          onChangeText={(t) => {
+            setTitle(t);
+            markDirty();
+          }}
+          placeholder="Tieu de"
+          placeholderTextColor={COLORS.textDim}
+          multiline
+          returnKeyType="next"
+          blurOnSubmit
+        />
+
+        {/* TAGS */}
+        <View style={s.tagsRow}>
+          {tags.map((t) => (
+            <TouchableOpacity
+              key={t}
+              style={s.tagChip}
+              onPress={() => {
+                setTags((p) => p.filter((x) => x !== t));
+                markDirty();
+              }}
+            >
+              <Text style={s.tagChipTx}>#{t} x</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            style={s.tagAddBtn}
+            onPress={() => setShowTagInput((v) => !v)}
+          >
+            <Ionicons
+              name="pricetag-outline"
+              size={11}
+              color={COLORS.textDim}
+            />
+            <Text style={s.tagAddTx}>tag</Text>
+          </TouchableOpacity>
+        </View>
+
+        {showTagInput && (
+          <View style={s.tagInputRow}>
+            <TextInput
+              style={s.tagField}
+              value={tagInput}
+              onChangeText={setTagInput}
+              placeholder="#ten-tag"
+              placeholderTextColor={COLORS.textDim}
+              onSubmitEditing={addTag}
+              returnKeyType="done"
+              autoCapitalize="none"
+              autoFocus
+            />
+            <TouchableOpacity style={s.tagConfirmBtn} onPress={addTag}>
+              <Text style={s.tagConfirmTx}>Them</Text>
+            </TouchableOpacity>
           </View>
         )}
+
+        {/* AI EXTRACTED PANEL */}
+        {showExtracted && extracted && (
+          <View style={s.extractedCard}>
+            <Text style={s.extractedTitle}>AI trich xuat</Text>
+            {extracted.person_name && (
+              <Text style={s.extractedRow}>
+                Person: {extracted.person_name}
+              </Text>
+            )}
+            {extracted.phone && (
+              <Text style={s.extractedRow}>Phone: {extracted.phone}</Text>
+            )}
+            {extracted.email && (
+              <Text style={s.extractedRow}>Email: {extracted.email}</Text>
+            )}
+            {extracted.event_title && (
+              <Text style={s.extractedRow}>Event: {extracted.event_title}</Text>
+            )}
+            {extracted.deadline && (
+              <Text style={s.extractedRow}>Deadline: {extracted.deadline}</Text>
+            )}
+          </View>
+        )}
+
+        {/* AUDIO CHIP */}
+        {audioState && (
+          <View style={s.audioChip}>
+            <TouchableOpacity style={s.audioPlayBtn} onPress={togglePlay}>
+              <Ionicons
+                name={isPlaying ? "pause" : "play"}
+                size={16}
+                color={COLORS.accent}
+              />
+            </TouchableOpacity>
+            <Text style={s.audioDur}>{fmtDur(audioState.duration)}</Text>
+            <TouchableOpacity
+              onPress={() => {
+                sound?.unloadAsync();
+                setSound(null);
+                setAudioState(null);
+              }}
+            >
+              <Ionicons name="close-circle" size={18} color={COLORS.textDim} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* FILE ATTACHMENTS */}
+        <FileAttachmentBar
+          noteId={noteId}
+          attachments={fileAttach}
+          onChange={(files) => {
+            setFileAttach(files);
+            markDirty();
+          }}
+        />
+
+        <View style={s.hairline} />
+
+        {/* TENTAP EDITOR — v1.x: dùng trực tiếp, không cần source/editorHtml */}
+        <RichText editor={editor} style={s.richText} />
+
+        {/* ATTACHMENT BAR + TOOLBAR */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={s.attachBar}>
+            <TouchableOpacity style={s.attachBtn} onPress={handlePickImage}>
+              <Ionicons
+                name="image-outline"
+                size={20}
+                color={COLORS.textMuted}
+              />
+              <Text style={s.attachLabel}>Anh</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.attachBtn} onPress={handleCamera}>
+              <Ionicons
+                name="camera-outline"
+                size={20}
+                color={COLORS.textMuted}
+              />
+              <Text style={s.attachLabel}>Camera</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.attachBtn, isRecording && s.attachBtnRec]}
+              onPress={isRecording ? stopRec : startRec}
+            >
+              <Ionicons
+                name={isRecording ? "stop-circle" : "mic-outline"}
+                size={20}
+                color={isRecording ? COLORS.danger : COLORS.textMuted}
+              />
+              <Text
+                style={[s.attachLabel, isRecording && { color: COLORS.danger }]}
+              >
+                {isRecording ? fmtDur(recSec) : "Ghi am"}
+              </Text>
+              {isRecording && <View style={s.recDot} />}
+            </TouchableOpacity>
+          </View>
+          <Toolbar editor={editor} />
+        </KeyboardAvoidingView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
-
-  // Top bar
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -847,21 +644,8 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },
-  backBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 4,
-    gap: 2,
-    minWidth: 80,
-  },
+  backBtn: { flexDirection: "row", alignItems: "center", gap: 2, minWidth: 80 },
   backLabel: { fontSize: 16, color: COLORS.accent },
-  unsavedDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.warning,
-    marginLeft: 4,
-  },
   topCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   dateText: { fontSize: 12, color: COLORS.textDim },
   savedBadge: {
@@ -887,17 +671,14 @@ const s = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
   },
-
-  // Editor
-  editorPad: { paddingBottom: 24 },
   titleInput: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "800",
     color: COLORS.text,
-    lineHeight: 36,
+    lineHeight: 34,
     letterSpacing: -0.5,
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
   },
   tagsRow: {
     flexDirection: "row",
@@ -905,18 +686,14 @@ const s = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 16,
     paddingBottom: 8,
-    minHeight: 28,
   },
   tagChip: {
-    flexDirection: "row",
-    alignItems: "center",
     backgroundColor: COLORS.active,
     borderRadius: 20,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  tagChipText: { fontSize: 12, color: COLORS.accent, fontWeight: "600" },
-  tagChipX: { fontSize: 10, color: COLORS.accent, opacity: 0.6 },
+  tagChipTx: { fontSize: 12, color: COLORS.accent, fontWeight: "600" },
   tagAddBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -927,7 +704,7 @@ const s = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
   },
-  tagAddText: { fontSize: 12, color: COLORS.textDim },
+  tagAddTx: { fontSize: 12, color: COLORS.textDim },
   tagInputRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -952,87 +729,85 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.accent,
     borderRadius: 10,
   },
-  tagConfirmText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  tagConfirmTx: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  extractedCard: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.accent + "40",
+  },
+  extractedTitle: {
+    fontSize: 12,
+    color: COLORS.accent,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  extractedRow: { fontSize: 13, color: COLORS.text, marginBottom: 4 },
+  audioChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 10,
+  },
+  audioPlayBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.active,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  audioDur: { flex: 1, fontSize: 13, color: COLORS.textMuted },
   hairline: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: COLORS.border,
-    marginBottom: 8,
   },
-  tapZone: { minHeight: 160 },
-
-  // ── Toolbar 2 tầng ────────────────────────────────────────────────────────────
-  toolbar: {
+  richText: { flex: 1, backgroundColor: COLORS.background },
+  attachBar: {
+    flexDirection: "row",
+    backgroundColor: COLORS.background,
+    gap: 4,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
-    backgroundColor: COLORS.background,
-  },
-
-  // Tầng 1: format buttons
-  toolRow1: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.border,
-  },
-  toolRow1Items: {
     paddingHorizontal: 8,
     paddingVertical: 6,
-    gap: 4,
-    alignItems: "center",
   },
-  formatBtn: {
-    minWidth: 36,
-    height: 32,
-    borderRadius: 8,
+  attachBtn: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 8,
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
     backgroundColor: COLORS.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
   },
-  formatBtnActive: {
-    backgroundColor: COLORS.accent,
-    borderColor: COLORS.accent,
+  attachBtnRec: {
+    backgroundColor: COLORS.danger + "15",
+    borderColor: COLORS.danger + "60",
   },
-  formatBtnText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
-  formatBtnTextActive: { color: "#fff" },
-
-  // Tầng 2: media + save
-  toolRow2: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 4,
+  attachLabel: { fontSize: 12, color: COLORS.textMuted, fontWeight: "500" },
+  recDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.danger,
+    marginLeft: 2,
   },
-  mediaButtons: {
-    flexDirection: "row",
-    gap: 2,
-    flex: 1,
+  toolbar: {
+    backgroundColor: COLORS.background,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
   },
-  mediaBtn: {
-    width: 40,
-    height: 36,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: COLORS.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.border,
-  },
-  toolSep: {
-    width: StyleSheet.hairlineWidth,
-    height: 28,
-    backgroundColor: COLORS.border,
-    marginHorizontal: 6,
-  },
-  saveBtn: {
-    height: 36,
-    paddingHorizontal: 20,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: COLORS.accent,
-  },
-  saveBtnDim: { opacity: 0.5 },
-  saveBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 });

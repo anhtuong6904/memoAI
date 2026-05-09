@@ -1,39 +1,44 @@
-import React, { useState } from 'react';
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import React, { useState } from "react";
 import {
-  View, Text, StyleSheet,
-  FlatList, ListRenderItem, TouchableOpacity,
-} from 'react-native';
-import { SafeAreaView }        from 'react-native-safe-area-context';
-import { useNavigation }       from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+  FlatList,
+  ListRenderItem,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-import { COLORS } from '../constants/colors';
-import { Note, RootStackParamList } from '../types';
-import { useNotes } from '../hooks/useNotes';
+import { COLORS } from "../constants/colors";
+import { useNotes } from "../hooks/useNotes";
+import { Note, RootStackParamList } from "../types";
 
-import NoteCard   from '../components/NoteCard';
-import EmptyState from '../components/EmptyState';
-import SearchBar  from '../components/SearchBar';
+import EmptyState from "../components/EmptyState";
+import NoteCard from "../components/NoteCard";
+import SearchBar from "../components/SearchBar";
 
-type Nav = NativeStackNavigationProp<RootStackParamList, 'HomeList'>;
+type Nav = NativeStackNavigationProp<RootStackParamList, "HomeList">;
 
 export default function HomeScreen() {
-  const navigation            = useNavigation<Nav>();
+  const navigation = useNavigation<Nav>();
   const { notes, loading, error, reload, removeNote } = useNotes();
-  const [search, setSearch]   = useState('');
+  const [search, setSearch] = useState("");
 
   // Lọc local theo từ khoá tìm kiếm
-  const filtered = notes.filter(n =>
-    n.content.toLowerCase().includes(search.toLowerCase()) ||
-    (n.summary ?? '').toLowerCase().includes(search.toLowerCase()),
+  const filtered = notes.filter(
+    (n) =>
+      n.content.toLowerCase().includes(search.toLowerCase()) ||
+      (n.summary ?? "").toLowerCase().includes(search.toLowerCase()),
   );
 
   const renderItem: ListRenderItem<Note> = ({ item }) => (
     <NoteCard
       note={item}
-      onPress={() => navigation.navigate('Edit', { noteId: item.id })}
+      onPress={() => navigation.navigate("Edit", { noteId: item.id })}
       onDelete={() => removeNote(item.id)}
-      onHold={() => console.log('Hold:', item.id)}
+      onHold={() => console.log("Hold:", item.id)}
     />
   );
 
@@ -64,7 +69,6 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-
       {/* Header */}
       <View style={styles.header}>
         <View>
@@ -73,7 +77,7 @@ export default function HomeScreen() {
         </View>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => navigation.navigate('Edit',{ noteId: undefined })}
+          onPress={() => navigation.navigate("Edit", { noteId: undefined })}
         >
           <Text style={styles.addButtonText}>＋</Text>
         </TouchableOpacity>
@@ -91,13 +95,13 @@ export default function HomeScreen() {
       {/* Danh sách ghi chú */}
       <FlatList<Note>
         data={filtered}
-        keyExtractor={item => item.id.toString()}
+        keyExtractor={(item) => item.id.toString()}
         renderItem={renderItem}
         onRefresh={reload}
         refreshing={loading}
         ListEmptyComponent={
           <EmptyState
-            message={search ? 'Không tìm thấy ghi chú' : 'Chưa có ghi chú nào'}
+            message={search ? "Không tìm thấy ghi chú" : "Chưa có ghi chú nào"}
             icon="📭"
           />
         }
@@ -107,7 +111,6 @@ export default function HomeScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       />
-
     </SafeAreaView>
   );
 }
@@ -119,8 +122,8 @@ const styles = StyleSheet.create({
   },
   center: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     gap: 12,
   },
   statusText: {
@@ -130,7 +133,7 @@ const styles = StyleSheet.create({
   errorText: {
     color: COLORS.danger,
     fontSize: 15,
-    textAlign: 'center',
+    textAlign: "center",
     paddingHorizontal: 24,
   },
   retryBtn: {
@@ -140,20 +143,20 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   retryText: {
-    color: '#fff',
-    fontWeight: '600',
+    color: "#fff",
+    fontWeight: "600",
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
   },
   headerTitle: {
     fontSize: 26,
-    fontWeight: '700',
+    fontWeight: "700",
     color: COLORS.text,
   },
   headerCount: {
@@ -166,12 +169,12 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     backgroundColor: COLORS.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   addButtonText: {
     fontSize: 22,
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     lineHeight: 26,
   },
   searchWrapper: {

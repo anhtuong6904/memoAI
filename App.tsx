@@ -8,7 +8,7 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-
+import ChatScreen from "./src/screens/ChatScreen";
 import EditScreen from "./src/screens/EditScreen";
 import HomeScreen from "./src/screens/HomeScreen";
 import RemindersScreen from "./src/screens/RemindersScreen";
@@ -22,16 +22,13 @@ function HomeStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="HomeList" component={HomeScreen} />
-      {/* <Stack.Screen name="Detail"   component={DetailScreen} /> */}
       <Stack.Screen name="Edit" component={EditScreen} />
     </Stack.Navigator>
   );
 }
 
-// ← Tách ra component riêng, hook chạy SAU khi SafeAreaProvider đã mount
 function AppNavigator() {
   const insets = useSafeAreaInsets();
-
   return (
     <>
       <StatusBar style="light" />
@@ -42,7 +39,6 @@ function AppNavigator() {
             tabBarStyle: {
               backgroundColor: "#0F0F0F",
               borderTopColor: "#1F2937",
-              paddingTop: 0,
               paddingBottom: insets.bottom + 6,
               height: 62 + insets.bottom,
             },
@@ -55,7 +51,7 @@ function AppNavigator() {
             name="Home"
             component={HomeStack}
             options={{
-              tabBarLabel: "Trang chủ",
+              tabBarLabel: "Trang chu",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="home-outline" size={size} color={color} />
               ),
@@ -65,9 +61,23 @@ function AppNavigator() {
             name="Search"
             component={SearchScreen}
             options={{
-              tabBarLabel: "Tìm kiếm",
+              tabBarLabel: "Tim kiem",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="search-outline" size={size} color={color} />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name="Chat"
+            component={ChatScreen}
+            options={{
+              tabBarLabel: "Chat AI",
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons
+                  name="chatbubble-ellipses-outline"
+                  size={size}
+                  color={color}
+                />
               ),
             }}
           />
@@ -75,7 +85,7 @@ function AppNavigator() {
             name="Reminders"
             component={RemindersScreen}
             options={{
-              tabBarLabel: "Nhắc nhở",
+              tabBarLabel: "Nhac nho",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons
                   name="notifications-outline"
@@ -91,12 +101,10 @@ function AppNavigator() {
   );
 }
 
-// ← App chỉ có nhiệm vụ wrap SafeAreaProvider, không dùng hook ở đây
 export default function App() {
   return (
     <SafeAreaProvider>
       <AppNavigator />
-      {/* <HomeStack/> */}
     </SafeAreaProvider>
   );
 }

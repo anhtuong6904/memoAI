@@ -1,219 +1,152 @@
-"""
-routes/notes.py — CRUD Notes
-GET    /notes        → danh sách notes
-GET    /notes/:id    → 1 note
-POST   /notes        → tạo note mới
-PUT    /notes/:id    → cập nhật note
-DELETE /notes/:id    → xóa note
-"""
-
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-
 from database import get_connection
+from services.tiptap import extract_plain_text
 
 router = APIRouter()
 
 
-# ── Pydantic Models — định nghĩa shape của request body ──────────────────────
-
 class NoteCreate(BaseModel):
-    title:   Optional[str] = None
-    content: str           = ""
-    type:    str           = "text"
-    tags:    str           = "[]"   # JSON string
+    title:        Optional[str] = None
+    content:      str           = ""
+    content_json: Optional[str] = None
+    tags:         str           = "[]"
 
 
 class NoteUpdate(BaseModel):
-    title:      Optional[str] = None
-    content:    Optional[str] = None
-    tags:       Optional[str] = None
-    is_pinned:  Optional[int] = None
-    is_archived: Optional[int] = None
+    title:        Optional[str] = None
+    content:      Optional[str] = None
+    content_json: Optional[str] = None
+    tags:         Optional[str] = None
+    is_pinned:    Optional[int] = None
+    is_archived:  Optional[int] = None
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+def _404(note_id: int):
+    raise HTTPException(status_code=404, detail=f"Note {note_id} not found")
 
-def note_not_found(note_id: int):
-    raise HTTPException(status_code=404, detail=f"Note {note_id} không tồn tại")
-
-def _get_attachments_map(conn, note_ids: list[int]) -> dict[int, list[dict]]:
-    if not note_ids:
-        return {}
-    placeholders = ",".join(["?"] * len(note_ids))
-    rows = conn.execute(
-        f"""SELECT id, note_id, type, file_path, file_name, mime_type, file_size,
-                   duration, width, height, caption, display_order, created_at
-            FROM note_attachments
-            WHERE note_id IN ({placeholders})
-            ORDER BY note_id, display_order, created_at""",
-        note_ids,
-    ).fetchall()
-    result: dict[int, list[dict]] = {}
-    for r in rows:
-        item = dict(r)
-        result.setdefault(item["note_id"], []).append(item)
-    return result
-
-# ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/")
 def get_notes(
-    tag:    Optional[str] = Query(None, description="Lọc theo tag"),
-    type:   Optional[str] = Query(None, description="Lọc theo type: text|image|voice|video|file"),
-    limit:  int           = Query(10,   description="Số note tối đa trả về"),
-    offset: int           = Query(0,    description="Bỏ qua bao nhiêu note (phân trang)"),
+    tag:     Optional[str] = Query(None),
+    type:    Optional[str] = Query(None),
+    limit:   int           = Query(50),
+    offset:  int           = Query(0),
 ):
-    """
-    Lấy danh sách notes, mới nhất lên đầu.
-    Hỗ trợ filter theo tag và type.
-    """
-    conn = get_connection()
-
-    query  = "SELECT * FROM notes WHERE is_archived = 0"
+    conn  = get_connection()
+    q     = "SELECT * FROM notes WHERE is_archived=0"
     params = []
-
-    # Filter theo type nếu có
     if type:
-        query += " AND type = ?"
-        params.append(type)
-
-    # Filter theo tag — tìm trong JSON string
-    # vd: tags = '["liên hệ", "công việc"]'
+        q += " AND type=?"; params.append(type)
     if tag:
-        query += " AND tags LIKE ?"
-        params.append(f'%{tag}%')
-
-    query += " ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?"
+        q += " AND tags LIKE ?"; params.append(f"%{tag}%")
+    q += " ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
-
-    notes = conn.execute(query, params).fetchall()
-    note_dicts = [dict(n) for n in notes]
-    attachments_map = _get_attachments_map(conn, [n["id"] for n in note_dicts])
-    for n in note_dicts:
-        n["attachments"] = attachments_map.get(n["id"], [])
+    notes = conn.execute(q, params).fetchall()
     conn.close()
-
-    return {
-        "success": True,
-        "data": note_dicts,
-        "count": len(note_dicts),
-    }
+    return {"success": True, "data": [dict(n) for n in notes], "count": len(notes)}
 
 
 @router.get("/{note_id}")
 def get_note(note_id: int):
-    """Lấy 1 note theo ID, kèm extracted_info nếu có."""
     conn = get_connection()
-
-    note = conn.execute(
-        "SELECT * FROM notes WHERE id = ?", [note_id]
-    ).fetchone()
-
+    note = conn.execute("SELECT * FROM notes WHERE id=?", [note_id]).fetchone()
     if not note:
-        conn.close()
-        note_not_found(note_id)
-
-    # Lấy kèm extracted_info
+        conn.close(); _404(note_id)
     extracted = conn.execute(
-        "SELECT * FROM extracted_info WHERE note_id = ?", [note_id]
-    ).fetchone()
-
+        "SELECT * FROM extracted_info WHERE note_id=?", [note_id]).fetchone()
     attachments = conn.execute(
-        """SELECT id, note_id, type, file_path, file_name, mime_type, file_size,
-                  duration, width, height, caption, display_order, created_at
-           FROM note_attachments WHERE note_id = ? ORDER BY display_order, created_at""",
-        [note_id],
-    ).fetchall()
-
+        "SELECT * FROM note_attachments WHERE note_id=? ORDER BY created_at", [note_id]).fetchall()
     conn.close()
-
-    note_data = dict(note)
-    note_data["attachments"] = [dict(a) for a in attachments]
-
     return {
-        "success":   True,
-        "data":      note_data,
-        "extracted": dict(extracted) if extracted else None,
+        "success":     True,
+        "data":        dict(note),
+        "extracted":   dict(extracted) if extracted else None,
+        "attachments": [dict(a) for a in attachments],
     }
 
 
 @router.post("/")
 def create_note(body: NoteCreate):
-    """Tạo note mới (text thuần, không qua AI pipeline)."""
     conn = get_connection()
     now  = datetime.now().isoformat()
-
-    cursor = conn.execute(
-        """INSERT INTO notes (title, content, type, tags, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        [body.title, body.content, body.type, body.tags, now, now]
-    )
+    content = body.content
+    if body.content_json:
+        content = extract_plain_text(body.content_json)
+    cur = conn.execute(
+        "INSERT INTO notes (title,content,content_json,tags,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+        [body.title, content, body.content_json, body.tags, now, now])
     conn.commit()
-    note_id = cursor.lastrowid
-
-    note = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
+    note = conn.execute("SELECT * FROM notes WHERE id=?", [cur.lastrowid]).fetchone()
     conn.close()
-
     return {"success": True, "data": dict(note)}
 
 
 @router.put("/{note_id}")
 def update_note(note_id: int, body: NoteUpdate):
-    """Cập nhật note — chỉ update các field được gửi lên."""
     conn = get_connection()
-
-    # Kiểm tra note tồn tại
-    existing = conn.execute("SELECT id FROM notes WHERE id = ?", [note_id]).fetchone()
-    if not existing:
-        conn.close()
-        note_not_found(note_id)
-
-    # Build dynamic UPDATE — chỉ update field có giá trị
-    fields = []
-    params = []
-
-    if body.title      is not None: fields.append("title = ?");       params.append(body.title)
-    if body.content    is not None: fields.append("content = ?");     params.append(body.content)
-    if body.tags       is not None: fields.append("tags = ?");        params.append(body.tags)
-    if body.is_pinned  is not None: fields.append("is_pinned = ?");   params.append(body.is_pinned)
-    if body.is_archived is not None: fields.append("is_archived = ?"); params.append(body.is_archived)
-
+    if not conn.execute("SELECT id FROM notes WHERE id=?", [note_id]).fetchone():
+        conn.close(); _404(note_id)
+    fields, params = [], []
+    if body.title is not None:
+        fields.append("title=?"); params.append(body.title)
+    if body.content_json is not None:
+        fields.append("content_json=?"); params.append(body.content_json)
+        fields.append("content=?");      params.append(extract_plain_text(body.content_json))
+    elif body.content is not None:
+        fields.append("content=?"); params.append(body.content)
+    if body.tags is not None:
+        fields.append("tags=?"); params.append(body.tags)
+    if body.is_pinned is not None:
+        fields.append("is_pinned=?"); params.append(body.is_pinned)
+    if body.is_archived is not None:
+        fields.append("is_archived=?"); params.append(body.is_archived)
     if not fields:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Không có field nào để update")
-
-    # Luôn update updated_at
-    fields.append("updated_at = ?")
-    params.append(datetime.now().isoformat())
+        conn.close(); raise HTTPException(400, "No fields to update")
+    fields.append("updated_at=?"); params.append(datetime.now().isoformat())
     params.append(note_id)
-
-    conn.execute(f"UPDATE notes SET {', '.join(fields)} WHERE id = ?", params)
+    conn.execute(f"UPDATE notes SET {', '.join(fields)} WHERE id=?", params)
     conn.commit()
-
-    note = conn.execute("SELECT * FROM notes WHERE id = ?", [note_id]).fetchone()
+    note = conn.execute("SELECT * FROM notes WHERE id=?", [note_id]).fetchone()
     conn.close()
-
     return {"success": True, "data": dict(note)}
 
 
 @router.delete("/{note_id}")
 def delete_note(note_id: int):
-    """
-    Xóa note.
-    ON DELETE CASCADE trong DB tự xóa extracted_info, reminders, note_tags liên quan.
-    """
     conn = get_connection()
+    if not conn.execute("SELECT id FROM notes WHERE id=?", [note_id]).fetchone():
+        conn.close(); _404(note_id)
+    conn.execute("DELETE FROM notes WHERE id=?", [note_id])
+    conn.commit(); conn.close()
+    return {"success": True, "message": f"Deleted note {note_id}"}
 
-    existing = conn.execute("SELECT id FROM notes WHERE id = ?", [note_id]).fetchone()
-    if not existing:
-        conn.close()
-        note_not_found(note_id)
 
-    conn.execute("DELETE FROM notes WHERE id = ?", [note_id])
+@router.put("/{note_id}/pin")
+def toggle_pin(note_id: int):
+    conn = get_connection()
+    note = conn.execute("SELECT * FROM notes WHERE id=?", [note_id]).fetchone()
+    if not note: conn.close(); _404(note_id)
+    new_val = 0 if note["is_pinned"] else 1
+    conn.execute("UPDATE notes SET is_pinned=?, updated_at=? WHERE id=?",
+                 [new_val, datetime.now().isoformat(), note_id])
     conn.commit()
+    note = conn.execute("SELECT * FROM notes WHERE id=?", [note_id]).fetchone()
     conn.close()
+    return {"success": True, "data": dict(note)}
 
-    return {"success": True, "message": f"Đã xóa note {note_id}"}
+
+@router.put("/{note_id}/archive")
+def toggle_archive(note_id: int):
+    conn = get_connection()
+    note = conn.execute("SELECT * FROM notes WHERE id=?", [note_id]).fetchone()
+    if not note: conn.close(); _404(note_id)
+    new_val = 0 if note["is_archived"] else 1
+    conn.execute("UPDATE notes SET is_archived=?, updated_at=? WHERE id=?",
+                 [new_val, datetime.now().isoformat(), note_id])
+    conn.commit()
+    note = conn.execute("SELECT * FROM notes WHERE id=?", [note_id]).fetchone()
+    conn.close()
+    return {"success": True, "data": dict(note)}
