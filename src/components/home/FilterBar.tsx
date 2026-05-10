@@ -1,5 +1,6 @@
 import { COLORS } from "@/src/constants/colors";
 import { FILTER_TYPES, FilterKey } from "@/src/types";
+import React from "react";
 import { FlatList, TouchableOpacity, Text, StyleSheet, View } from "react-native";
 
 

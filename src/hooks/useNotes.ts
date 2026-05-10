@@ -1,13 +1,19 @@
 /**
  * hooks/useNotes.ts
  *
- * Hook quản lý toàn bộ state của notes.
- * Dùng trong HomeScreen (danh sách) và EditScreen (chi tiết).
+ * Hook quan ly state cua notes.
+ * Dung trong HomeScreen (danh sach) va EditScreen (chi tiet).
+ *
+ * Architecture: note-as-container
+ *   - createNote: tao note rong
+ *   - updateNote: cap nhat noi dung
+ *   - analyzeNote: chay AI pipeline (extract info + reminders)
+ *   - uploadAttachment: dinh kem file (qua FileAttachmentBar)
  */
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  captureText,
+  analyzeNote as analyzeNoteApi,
   createNote as createNoteApi,
   deleteNote as deleteNoteApi,
   getAllNotes,
@@ -16,11 +22,13 @@ import {
   togglePin as togglePinApi,
   updateNote as updateNoteApi,
 } from "../services/api";
-import { Note } from "../types";
+import { FileAttachment, Note } from "../types";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
-/** Thông tin AI trích xuất — map với bảng extracted_info trong DB */
+/** Thong tin AI trich xuat — map voi bang extracted_info trong DB */
 export interface ExtractedInfo {
   id: number;
   note_id: number;
@@ -30,6 +38,8 @@ export interface ExtractedInfo {
   organization?: string;
   place_name?: string;
   address?: string;
+  location_lat?: number;
+  location_lng?: number;
   event_title?: string;
   event_time?: string;
   deadline?: string;
@@ -38,15 +48,19 @@ export interface ExtractedInfo {
   reminder_needed: number; // 0 | 1
   raw_json?: string;
   created_at: string;
+
+  // Optional convenience fields injected by EditScreen khi merge tu Note
+  summary?: string;
 }
 
 export interface FilterOptions {
-  type?: "text" | "image" | "voice" | "video" | "file" | "all";
+  /** Phai khop voi Note.type — chi co 4 loai */
+  type?: "text" | "image" | "voice" | "video" | "all";
   tag?: string;
 }
 
 interface UseNotesReturn {
-  // ── Danh sách notes ──────────────────────────────────────────────────────
+  // ── Danh sach notes ──────────────────────────────────────────────────────
   notes: Note[];
   loading: boolean;
   error: string | null;
@@ -58,22 +72,9 @@ interface UseNotesReturn {
   // ── Actions ──────────────────────────────────────────────────────────────
   reload: () => Promise<void>;
   removeNote: (id: number) => Promise<void>;
-
-  /**
-   * Tạo note text thuần — không qua AI pipeline.
-   * Dùng trong EditScreen khi user gõ tay bình thường.
-   * Nhanh hơn captureText vì không cần đợi LLM.
-   */
   createNote: (content: string, title?: string) => Promise<Note>;
-
-  /**
-   * Tạo note qua AI pipeline.
-   * Dùng khi muốn AI tự động trích xuất thông tin từ text.
-   * Chậm hơn ~3s nhưng tạo ra extracted_info tự động.
-   */
-  captureNoteFromText: (text: string, noteId?: number) => Promise<Note>;
-
   updateNote: (id: number, data: Partial<Note>) => Promise<Note>;
+  analyzeNote: (id: number) => Promise<void>;
   pinNote: (note: Note) => Promise<void>;
   archiveNote: (note: Note) => Promise<void>;
 }
@@ -81,13 +82,14 @@ interface UseNotesReturn {
 interface UseNoteDetailReturn {
   note: Note | null;
   extracted: ExtractedInfo | null;
+  attachment: FileAttachment[] | null;
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// useNotes — dùng trong HomeScreen
+// useNotes — dung trong HomeScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function useNotes(): UseNotesReturn {
@@ -96,98 +98,114 @@ export function useNotes(): UseNotesReturn {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterOptions>({ type: "all" });
 
-  // ── Fetch danh sách notes từ server ────────────────────────────────────────
+  // ── Fetch danh sach notes ────────────────────────────────────────────────
   const reload = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
+      // Loai bo "all" khi gui len server (server expect 'text' | 'image' | ...)
+      const serverType =
+        filter.type && filter.type !== "all" ? filter.type : undefined;
+
       const data = await getAllNotes({
-        type: filter.type === "all" ? undefined : filter.type,
+        type: serverType,
         tag: filter.tag,
-        limit: 50, // Lấy 50 notes gần nhất
+        limit: 50,
       });
 
       setNotes(data);
-    } catch {
-      setError("Không kết nối được server");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Khong ket noi duoc server";
+      setError(msg);
+      console.warn("[useNotes] reload error:", msg);
     } finally {
       setLoading(false);
     }
-  }, [filter]); // Re-fetch khi filter thay đổi
+  }, [filter]);
 
-  // ── Auto reload khi filter thay đổi ───────────────────────────────────────
   useEffect(() => {
     reload();
   }, [reload]);
 
-  // ── Xóa note: update local trước, fetch lại sau ────────────────────────────
-  const removeNote = async (id: number) => {
-    // Optimistic update — xóa khỏi UI ngay lập tức
-    setNotes((prev) => prev.filter((n) => n.id !== id));
-    try {
-      await deleteNoteApi(id);
-    } catch {
-      // Nếu server lỗi → fetch lại để đồng bộ
+  // ── Xoa note ────────────────────────────────────────────────────────────
+  const removeNote = useCallback(
+    async (id: number) => {
+      // Optimistic update
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+      try {
+        await deleteNoteApi(id);
+      } catch {
+        // Server fail -> fetch lai de dong bo
+        await reload();
+      }
+    },
+    [reload],
+  );
+
+  // ── Tao note moi ─────────────────────────────────────────────────────────
+  const createNote = useCallback(
+    async (content: string, title?: string): Promise<Note> => {
+      const newNote = await createNoteApi(content, title);
+      setNotes((prev) => [newNote, ...prev]);
+      return newNote;
+    },
+    [],
+  );
+
+  // ── Update note ─────────────────────────────────────────────────────────
+  const updateNote = useCallback(
+    async (id: number, data: Partial<Note>): Promise<Note> => {
+      const updated = await updateNoteApi(id, data);
+      setNotes((prev) => prev.map((n) => (n.id === id ? updated : n)));
+      return updated;
+    },
+    [],
+  );
+
+  // ── Chay AI analyze pipeline ─────────────────────────────────────────────
+  const analyzeNote = useCallback(
+    async (id: number): Promise<void> => {
+      await analyzeNoteApi(id);
+      // Sau khi analyze: reload de lay tags moi, summary moi
       await reload();
-    }
-  };
+    },
+    [reload],
+  );
 
-  // ── Tạo note text thuần (không AI) ────────────────────────────────────────
-  const createNote = async (content: string, title?: string): Promise<Note> => {
-    const newNote = await createNoteApi(content, title);
-    setNotes((prev) => [newNote, ...prev]);
-    return newNote;
-  };
+  // ── Toggle pin ──────────────────────────────────────────────────────────
+  const pinNote = useCallback(
+    async (note: Note): Promise<void> => {
+      // Optimistic update
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === note.id
+            ? { ...n, is_pinned: note.is_pinned === 1 ? 0 : 1 }
+            : n,
+        ),
+      );
+      try {
+        await togglePinApi(note);
+      } catch {
+        await reload();
+      }
+    },
+    [reload],
+  );
 
-  // ── Tạo note qua AI pipeline ───────────────────────────────────────────────
-  const captureNoteFromText = async (
-    text: string,
-    noteId?: number,
-  ): Promise<Note> => {
-    const noteResult = await captureText(text, undefined, noteId);
-    if (noteId) {
-      setNotes((prev) => prev.map((n) => (n.id === noteId ? noteResult : n)));
-    } else {
-      setNotes((prev) => [noteResult, ...prev]);
-    }
-    return noteResult;
-  };
-
-  // ── Update note ────────────────────────────────────────────────────────────
-  const updateNote = async (id: number, data: Partial<Note>): Promise<Note> => {
-    const updated = await updateNoteApi(id, data);
-    setNotes((prev) => prev.map((n) => (n.id === id ? updated : n)));
-    return updated;
-  };
-
-  // ── Toggle pin ─────────────────────────────────────────────────────────────
-  const pinNote = async (note: Note): Promise<void> => {
-    // Optimistic update
-    setNotes((prev) =>
-      prev.map((n) =>
-        n.id === note.id
-          ? { ...n, is_pinned: note.is_pinned === 1 ? 0 : 1 }
-          : n,
-      ),
-    );
-    try {
-      await togglePinApi(note);
-    } catch {
-      await reload();
-    }
-  };
-
-  // ── Toggle archive ─────────────────────────────────────────────────────────
-  const archiveNote = async (note: Note): Promise<void> => {
-    // Optimistic update — ẩn khỏi danh sách ngay
-    setNotes((prev) => prev.filter((n) => n.id !== note.id));
-    try {
-      await toggleArchiveApi(note);
-    } catch {
-      await reload();
-    }
-  };
+  // ── Toggle archive ──────────────────────────────────────────────────────
+  const archiveNote = useCallback(
+    async (note: Note): Promise<void> => {
+      // Optimistic — an khoi danh sach ngay
+      setNotes((prev) => prev.filter((n) => n.id !== note.id));
+      try {
+        await toggleArchiveApi(note);
+      } catch {
+        await reload();
+      }
+    },
+    [reload],
+  );
 
   return {
     notes,
@@ -198,37 +216,59 @@ export function useNotes(): UseNotesReturn {
     reload,
     removeNote,
     createNote,
-    captureNoteFromText,
     updateNote,
+    analyzeNote,
     pinNote,
     archiveNote,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// useNoteDetail — dùng trong EditScreen
-// Load 1 note theo ID, kèm extracted_info
+// useNoteDetail — dung trong EditScreen
+// Load 1 note theo ID, kem extracted_info
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function useNoteDetail(noteId: number | undefined): UseNoteDetailReturn {
   const [note, setNote] = useState<Note | null>(null);
   const [extracted, setExtracted] = useState<ExtractedInfo | null>(null);
+  const [attachment, setAttachment] = useState<FileAttachment[]>([]);
   const [loading, setLoading] = useState<boolean>(noteId !== undefined);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (noteId === undefined) return;
-
+    if (noteId === undefined) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
-
-      // getNoteByID trả về { data: Note, extracted: ExtractedInfo | null }
       const result = await getNoteByID(noteId);
       setNote(result.data);
-      setExtracted(result.extracted as ExtractedInfo | null);
-    } catch {
-      setError("Không tải được ghi chú");
+
+      // Merge note.summary vao extracted de tien hien thi trong AI panel
+      const ext = result.extracted as ExtractedInfo | null;
+      if (ext && result.data?.summary) {
+        ext.summary = result.data.summary;
+      }
+      setExtracted(ext);
+
+      const attach: FileAttachment[] = (result.attachments ?? []).map(
+        (a: any) => ({
+          id: String(a.id),
+          name: a.file_name,
+          uri: a.file_url,
+          mimeType: a.mime_type,
+          size: a.file_size,
+          uploaded: true,
+          remoteUrl: a.file_url,
+        }),
+      );
+      setAttachment(attach);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Khong tai duoc ghi chu";
+      setError(msg);
+      console.warn("[useNoteDetail] reload error:", msg);
     } finally {
       setLoading(false);
     }
@@ -238,5 +278,5 @@ export function useNoteDetail(noteId: number | undefined): UseNoteDetailReturn {
     reload();
   }, [reload]);
 
-  return { note, extracted, loading, error, reload };
+  return { note, extracted, attachment, loading, error, reload };
 }

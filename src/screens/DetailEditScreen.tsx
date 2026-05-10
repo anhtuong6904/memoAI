@@ -1,4 +1,5 @@
 import {
+  CoreBridge,
   RichText,
   TenTapStartKit,
   Toolbar,
@@ -37,6 +38,7 @@ import { COLORS } from "../constants/colors";
 import { useNoteDetail } from "../hooks/useNotes";
 import {
   analyzeNote,
+  createNote,
   deleteNote,
   updateNote,
   uploadAttachment,
@@ -49,7 +51,60 @@ interface AudioState {
   uri: string;
   duration: number;
   uploaded: boolean;
+  remoteUrl?: string;
 }
+
+// ── Dark theme CSS injected vào WebView của TenTap ─────────────────────
+const EDITOR_CSS = `
+  body {
+    background-color: ${COLORS.background};
+    color: ${COLORS.text};
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.6;
+    padding: 12px 16px; margin: 0;
+    caret-color: ${COLORS.accent};
+  }
+  ::selection { background-color: ${COLORS.accent}55; }
+  h1 { font-size: 26px; font-weight: 800; margin: 18px 0 8px; line-height: 1.3; color: ${COLORS.text}; }
+  h2 { font-size: 22px; font-weight: 700; margin: 16px 0 6px; line-height: 1.3; color: ${COLORS.text}; }
+  h3 { font-size: 18px; font-weight: 600; margin: 12px 0 4px; line-height: 1.4; color: ${COLORS.text}; }
+  p { margin: 6px 0; color: ${COLORS.text}; }
+  ul, ol { padding-left: 24px; margin: 6px 0; }
+  li { margin: 3px 0; color: ${COLORS.text}; }
+  ul[data-type="taskList"] { list-style: none; padding: 0; }
+  ul[data-type="taskList"] li {
+    display: flex; align-items: flex-start; gap: 8px; margin: 6px 0;
+  }
+  ul[data-type="taskList"] input[type="checkbox"] {
+    accent-color: ${COLORS.accent}; width: 18px; height: 18px; margin-top: 2px;
+  }
+  blockquote {
+    border-left: 3px solid ${COLORS.accent};
+    padding-left: 14px; margin: 10px 0;
+    color: ${COLORS.textMuted}; font-style: italic;
+    background: ${COLORS.surface}40; border-radius: 0 8px 8px 0;
+  }
+  code {
+    background: ${COLORS.surface}; color: ${COLORS.accent};
+    padding: 2px 6px; border-radius: 4px;
+    font-family: "SF Mono", Consolas, monospace; font-size: 14px;
+  }
+  pre {
+    background: ${COLORS.surface}; border-radius: 10px; padding: 14px;
+    overflow-x: auto; margin: 10px 0; border: 1px solid ${COLORS.border};
+  }
+  pre code { background: transparent; padding: 0; color: ${COLORS.text}; font-size: 13px; }
+  hr { border: none; height: 1px; background: ${COLORS.border}; margin: 18px 0; }
+  a { color: ${COLORS.accent}; text-decoration: underline; }
+  img { max-width: 100%; height: auto; border-radius: 10px; margin: 10px 0; display: block; }
+  strong { color: ${COLORS.text}; font-weight: 700; }
+  em { color: ${COLORS.text}; font-style: italic; }
+  p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: ${COLORS.textDim};
+    pointer-events: none; height: 0; float: left;
+  }
+`;
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleString("vi-VN", {
@@ -71,16 +126,18 @@ const parseTags = (raw: string): string[] => {
   }
 };
 
-// ── Convert local image URI -> base64 data URI ──────────────────────────────
-// Tránh dùng file:// trực tiếp trong WebView — base64 hoạt động mọi version
 async function uriToBase64(
   uri: string,
   mimeType = "image/jpeg",
 ): Promise<string> {
-  const b64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: "base64",
-  });
+  const b64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
   return `data:${mimeType};base64,${b64}`;
+}
+
+function serializeContent(content: unknown): string {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  return JSON.stringify(content);
 }
 
 export default function EditScreen({ route, navigation }: Props) {
@@ -90,9 +147,13 @@ export default function EditScreen({ route, navigation }: Props) {
   const {
     note,
     extracted,
+    attachment,
     loading: noteLoading,
     reload,
   } = useNoteDetail(noteId);
+
+  const sessionNoteIdRef = useRef<number | null>(noteId ?? null);
+  const initialLoadDone = useRef(false);
 
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -108,6 +169,7 @@ export default function EditScreen({ route, navigation }: Props) {
   const [recSec, setRecSec] = useState(0);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
 
   const titleRef = useRef<TextInput>(null);
   const isDirty = useRef(false);
@@ -115,33 +177,42 @@ export default function EditScreen({ route, navigation }: Props) {
   const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const savedOpacity = useRef(new Animated.Value(0)).current;
 
-  // ── TenTap — v1.x không cần ghi editorHtml ra file system ─────────────
   const editor = useEditorBridge({
     autofocus: false,
     avoidIosKeyboard: true,
     initialContent: "",
-    bridgeExtensions: TenTapStartKit,
+    bridgeExtensions: [...TenTapStartKit, CoreBridge.configureCSS(EDITOR_CSS)],
     onChange: () => markDirty(),
   });
-  const editorContent = useEditorContent(editor, { type: "html" });
+  const editorContent = useEditorContent(editor, { type: "json" });
 
-  // ── Sync note -> editor ────────────────────────────────────────────────
+  // Sync note → editor CHỈ 1 LẦN
   useEffect(() => {
     if (!note) return;
+    sessionNoteIdRef.current = note.id;
+    if (initialLoadDone.current) return;
     setTitle(note.title ?? "");
     setTags(parseTags(note.tags));
-    const json = (note as any).content_json;
-    if (json) {
-      try {
-        editor.setContent(JSON.parse(json));
-      } catch {}
-    } else if (note.content) {
-      editor.setContent(`<p>${note.content.replace(/\n/g, "</p><p>")}</p>`);
-    }
+    setFileAttach(attachment ?? []);
+    const timer = setTimeout(() => {
+      const json = (note as any).content_json;
+      if (json) {
+        try {
+          const parsed = typeof json === "string" ? JSON.parse(json) : json;
+          editor.setContent(parsed);
+        } catch {}
+      } else if (note.content) {
+        editor.setContent(`<p>${note.content.replace(/\n/g, "</p><p>")}</p>`);
+      }
+      initialLoadDone.current = true;
+    }, 150);
+
+    return () => clearTimeout(timer);
   }, [note]);
 
   useFocusEffect(
     useCallback(() => {
+      initialLoadDone.current = false; // ← thêm dòng này
       reload();
     }, [reload]),
   );
@@ -157,11 +228,20 @@ export default function EditScreen({ route, navigation }: Props) {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
+  // beforeRemove listener — wrap dispatch trong try/catch
   useEffect(() => {
     const unsub = navigation.addListener("beforeRemove", (e) => {
       if (!isDirty.current) return;
       e.preventDefault();
-      doSave(false).then(() => navigation.dispatch(e.data.action));
+      doSave(false)
+        .catch((err) => console.warn("save before leave err:", err))
+        .finally(() => {
+          try {
+            navigation.dispatch(e.data.action);
+          } catch (err) {
+            console.warn("dispatch err:", err);
+          }
+        });
     });
     return unsub;
   }, [navigation, title, tags, editorContent]);
@@ -173,7 +253,6 @@ export default function EditScreen({ route, navigation }: Props) {
     [sound],
   );
 
-  // ── Save helpers ───────────────────────────────────────────────────────
   const flashSaved = () =>
     Animated.sequence([
       Animated.timing(savedOpacity, {
@@ -195,39 +274,48 @@ export default function EditScreen({ route, navigation }: Props) {
     saveTimer.current = setTimeout(() => doSave(false), 1500);
   }, []);
 
+  // ── Tự tạo note nếu chưa có id, trả về id ──────────────────────────
+  const ensureNoteId = useCallback(async (): Promise<number> => {
+    if (sessionNoteIdRef.current !== null) return sessionNoteIdRef.current;
+    const newNote = await createNote("", title || "Ghi chu moi");
+    sessionNoteIdRef.current = newNote.id;
+    navigation.setParams({ noteId: newNote.id });
+    initialLoadDone.current = true;
+    console.log("ensureNoteId: created", newNote.id);
+    return newNote.id;
+  }, [title, navigation]);
+
   const doSave = useCallback(
     async (spinner: boolean) => {
-      const cj =
-        editorContent == null
-          ? ""
-          : typeof editorContent === "string"
-            ? editorContent
-            : JSON.stringify(editorContent); // object → stringify
-      if (!title.trim() && !cj) return;
+      const cj = serializeContent(editorContent);
+      if (!title.trim() && !cj.trim()) return;
       try {
         if (spinner) setSaving(true);
-        if (note) {
-          await updateNote(note.id, {
-            title,
-            content_json: cj,
-            tags: JSON.stringify(tags),
-          });
-        }
+        const id = await ensureNoteId();
+        await updateNote(id, {
+          title: title || "",
+          content_json: cj,
+          tags: JSON.stringify(tags),
+        });
         isDirty.current = false;
         flashSaved();
       } catch (e) {
+        console.error("doSave error:", e);
         if (spinner)
-          Alert.alert("Loi", e instanceof Error ? e.message : "Luu that bai");
+          Alert.alert(
+            "Loi luu",
+            e instanceof Error ? e.message : "Luu that bai",
+          );
       } finally {
         if (spinner) setSaving(false);
       }
     },
-    [editorContent, note, tags, title],
+    [editorContent, ensureNoteId, tags, title],
   );
 
-  // ── Delete ─────────────────────────────────────────────────────────────
   const handleDelete = () => {
-    if (isNew) {
+    const id = sessionNoteIdRef.current;
+    if (id === null) {
       navigation.goBack();
       return;
     }
@@ -237,32 +325,49 @@ export default function EditScreen({ route, navigation }: Props) {
         text: "Xoa",
         style: "destructive",
         onPress: async () => {
-          if (!note) return;
-          await deleteNote(note.id);
-          isDirty.current = false;
-          navigation.goBack();
+          try {
+            await deleteNote(id);
+            isDirty.current = false;
+            // Chỉ goBack khi delete thành công
+            if (navigation.canGoBack()) navigation.goBack();
+          } catch (e) {
+            console.error("delete err:", e);
+            Alert.alert(
+              "Loi xoa",
+              "Khong xoa duoc note. Co the do FK trong DB cu. " +
+                "Hay restart backend de chay migration.",
+            );
+          }
         },
       },
     ]);
   };
 
-  // ── AI Analyze ─────────────────────────────────────────────────────────
   const handleAnalyze = async () => {
-    if (!note) return;
+    const id = sessionNoteIdRef.current;
+    if (id === null) {
+      Alert.alert("Luu truoc", "Hay luu ghi chu truoc khi phan tich.");
+      return;
+    }
     setAnalyzing(true);
     try {
       await doSave(false);
-      await analyzeNote(note.id);
+      const result = await analyzeNote(id);
+      console.log("analyze result:", result);
       await reload();
       setShowExtracted(true);
-    } catch {
-      Alert.alert("Loi", "Khong the phan tich. Kiem tra backend.");
+    } catch (e) {
+      console.error("analyze error:", e);
+      Alert.alert(
+        "Loi phan tich",
+        e instanceof Error ? e.message : "Khong xac dinh",
+      );
     } finally {
       setAnalyzing(false);
     }
   };
 
-  // ── Image picker — convert to base64 để tránh file:// issue ───────────
+  // ── Image: luôn upload as attachment (auto-create note nếu cần) ──────
   const handlePickImage = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
@@ -270,32 +375,33 @@ export default function EditScreen({ route, navigation }: Props) {
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images", "livePhotos", "videos"],
       quality: 0.8,
     });
     if (res.canceled || !res.assets[0]) return;
     const asset = res.assets[0];
     try {
-      // Base64 data URI — hoạt động trong WebView mọi platform
       const dataUri = await uriToBase64(asset.uri, "image/jpeg");
       editor.setImage(dataUri);
       markDirty();
-      // Upload as attachment nếu note đã có id
-      if (noteId) {
-        const att = await uploadAttachment(
-          noteId,
-          asset.uri,
-          `photo_${Date.now()}.jpg`,
-          "image/jpeg",
-        );
-        setFileAttach((prev) => [...prev, att]);
-      }
+      const id = await ensureNoteId();
+      const att = await uploadAttachment(
+        id,
+        asset.uri,
+        `photo_${Date.now()}.jpg`,
+        "image/jpeg",
+      );
+      setFileAttach((prev) => [...prev, att]);
+      console.log("image uploaded:", att.id);
     } catch (e) {
-      Alert.alert("Loi", "Khong the them anh.");
+      console.error("pick image:", e);
+      Alert.alert(
+        "Loi",
+        "Khong the them anh: " + (e instanceof Error ? e.message : ""),
+      );
     }
   };
 
-  // ── Camera ─────────────────────────────────────────────────────────────
   const handleCamera = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
@@ -304,16 +410,27 @@ export default function EditScreen({ route, navigation }: Props) {
     }
     const res = await ImagePicker.launchCameraAsync({ quality: 0.8 });
     if (res.canceled || !res.assets[0]) return;
+    const asset = res.assets[0];
     try {
-      const dataUri = await uriToBase64(res.assets[0].uri, "image/jpeg");
+      const dataUri = await uriToBase64(asset.uri, "image/jpeg");
       editor.setImage(dataUri);
       markDirty();
-    } catch {
+      const id = await ensureNoteId();
+      const att = await uploadAttachment(
+        id,
+        asset.uri,
+        `cam_${Date.now()}.jpg`,
+        "image/jpeg",
+      );
+      setFileAttach((prev) => [...prev, att]);
+      console.log("camera uploaded:", att.id);
+    } catch (e) {
+      console.error("camera:", e);
       Alert.alert("Loi", "Khong the them anh tu camera.");
     }
   };
 
-  // ── Audio record ───────────────────────────────────────────────────────
+  // ── Audio: upload sau khi recording dừng ──────────────────────────
   const startRec = async () => {
     const perm = await Audio.requestPermissionsAsync();
     if (!perm.granted) {
@@ -338,9 +455,39 @@ export default function EditScreen({ route, navigation }: Props) {
     if (recTimer.current) clearInterval(recTimer.current);
     await recording.stopAndUnloadAsync();
     const uri = recording.getURI();
-    if (uri) setAudioState({ uri, duration: recSec, uploaded: false });
+    const dur = recSec;
     setRecording(null);
     setIsRecording(false);
+    if (!uri) return;
+
+    setAudioState({ uri, duration: dur, uploaded: false });
+    markDirty();
+
+    // Upload audio như attachment ngay
+    setUploadingAudio(true);
+    try {
+      const id = await ensureNoteId();
+      const ext = uri.split(".").pop() ?? "m4a";
+      const att = await uploadAttachment(
+        id,
+        uri,
+        `voice_${Date.now()}.${ext}`,
+        ext === "m4a" ? "audio/x-m4a" : "audio/mp4",
+      );
+      setFileAttach((prev) => [...prev, att]);
+      setAudioState((prev) =>
+        prev ? { ...prev, uploaded: true, remoteUrl: att.remoteUrl } : prev,
+      );
+      console.log("audio uploaded:", att.id);
+    } catch (e) {
+      console.error("audio upload:", e);
+      Alert.alert(
+        "Loi",
+        "Khong the upload audio: " + (e instanceof Error ? e.message : ""),
+      );
+    } finally {
+      setUploadingAudio(false);
+    }
   };
 
   const togglePlay = async () => {
@@ -369,7 +516,6 @@ export default function EditScreen({ route, navigation }: Props) {
     });
   };
 
-  // ── Tags ───────────────────────────────────────────────────────────────
   const addTag = () => {
     const t = tagInput.trim().replace(/^#/, "").toLowerCase();
     if (t && !tags.includes(t)) {
@@ -380,7 +526,7 @@ export default function EditScreen({ route, navigation }: Props) {
     setShowTagInput(false);
   };
 
-  if (noteLoading) {
+  if (noteLoading && !isNew) {
     return (
       <SafeAreaView style={s.container}>
         <View style={s.centered}>
@@ -397,11 +543,12 @@ export default function EditScreen({ route, navigation }: Props) {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={0}
       >
-        {/* TOP BAR */}
         <View style={s.topBar}>
           <TouchableOpacity
             style={s.backBtn}
-            onPress={() => navigation.goBack()}
+            onPress={() => {
+              if (navigation.canGoBack()) navigation.goBack();
+            }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="chevron-back" size={24} color={COLORS.accent} />
@@ -426,7 +573,7 @@ export default function EditScreen({ route, navigation }: Props) {
           </View>
 
           <View style={s.topRight}>
-            {!isNew && (
+            {sessionNoteIdRef.current !== null && (
               <TouchableOpacity
                 style={s.topBtn}
                 onPress={handleAnalyze}
@@ -464,7 +611,6 @@ export default function EditScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        {/* TITLE */}
         <TextInput
           ref={titleRef}
           style={s.titleInput}
@@ -480,7 +626,6 @@ export default function EditScreen({ route, navigation }: Props) {
           blurOnSubmit
         />
 
-        {/* TAGS */}
         <View style={s.tagsRow}>
           {tags.map((t) => (
             <TouchableOpacity
@@ -526,31 +671,36 @@ export default function EditScreen({ route, navigation }: Props) {
           </View>
         )}
 
-        {/* AI EXTRACTED PANEL */}
         {showExtracted && extracted && (
           <View style={s.extractedCard}>
             <Text style={s.extractedTitle}>AI trich xuat</Text>
+            {extracted.summary && (
+              <Text style={s.extractedRow}>{extracted.summary}</Text>
+            )}
             {extracted.person_name && (
-              <Text style={s.extractedRow}>
-                Person: {extracted.person_name}
-              </Text>
+              <Text style={s.extractedRow}>👤 {extracted.person_name}</Text>
             )}
             {extracted.phone && (
-              <Text style={s.extractedRow}>Phone: {extracted.phone}</Text>
+              <Text style={s.extractedRow}>📞 {extracted.phone}</Text>
             )}
             {extracted.email && (
-              <Text style={s.extractedRow}>Email: {extracted.email}</Text>
+              <Text style={s.extractedRow}>✉️ {extracted.email}</Text>
+            )}
+            {extracted.organization && (
+              <Text style={s.extractedRow}>🏢 {extracted.organization}</Text>
             )}
             {extracted.event_title && (
-              <Text style={s.extractedRow}>Event: {extracted.event_title}</Text>
+              <Text style={s.extractedRow}>📅 {extracted.event_title}</Text>
             )}
             {extracted.deadline && (
-              <Text style={s.extractedRow}>Deadline: {extracted.deadline}</Text>
+              <Text style={s.extractedRow}>⏰ {extracted.deadline}</Text>
+            )}
+            {extracted.address && (
+              <Text style={s.extractedRow}>📍 {extracted.address}</Text>
             )}
           </View>
         )}
 
-        {/* AUDIO CHIP */}
         {audioState && (
           <View style={s.audioChip}>
             <TouchableOpacity style={s.audioPlayBtn} onPress={togglePlay}>
@@ -560,7 +710,14 @@ export default function EditScreen({ route, navigation }: Props) {
                 color={COLORS.accent}
               />
             </TouchableOpacity>
-            <Text style={s.audioDur}>{fmtDur(audioState.duration)}</Text>
+            <Text style={s.audioDur}>
+              {fmtDur(audioState.duration)}
+              {uploadingAudio
+                ? "  (uploading...)"
+                : audioState.uploaded
+                  ? "  ✓"
+                  : ""}
+            </Text>
             <TouchableOpacity
               onPress={() => {
                 sound?.unloadAsync();
@@ -573,9 +730,8 @@ export default function EditScreen({ route, navigation }: Props) {
           </View>
         )}
 
-        {/* FILE ATTACHMENTS */}
         <FileAttachmentBar
-          noteId={noteId}
+          noteId={sessionNoteIdRef.current ?? undefined}
           attachments={fileAttach}
           onChange={(files) => {
             setFileAttach(files);
@@ -585,10 +741,10 @@ export default function EditScreen({ route, navigation }: Props) {
 
         <View style={s.hairline} />
 
-        {/* TENTAP EDITOR — v1.x: dùng trực tiếp, không cần source/editorHtml */}
-        <RichText editor={editor} style={s.richText} />
+        <View style={s.editorWrap}>
+          <RichText editor={editor} style={s.richText} />
+        </View>
 
-        {/* ATTACHMENT BAR + TOOLBAR */}
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
@@ -599,7 +755,6 @@ export default function EditScreen({ route, navigation }: Props) {
                 size={20}
                 color={COLORS.textMuted}
               />
-              <Text style={s.attachLabel}>Anh</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.attachBtn} onPress={handleCamera}>
               <Ionicons
@@ -607,7 +762,6 @@ export default function EditScreen({ route, navigation }: Props) {
                 size={20}
                 color={COLORS.textMuted}
               />
-              <Text style={s.attachLabel}>Camera</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.attachBtn, isRecording && s.attachBtnRec]}
@@ -621,12 +775,14 @@ export default function EditScreen({ route, navigation }: Props) {
               <Text
                 style={[s.attachLabel, isRecording && { color: COLORS.danger }]}
               >
-                {isRecording ? fmtDur(recSec) : "Ghi am"}
+                {isRecording ? fmtDur(recSec) : undefined}
               </Text>
               {isRecording && <View style={s.recDot} />}
             </TouchableOpacity>
+            <View style={s.toolbarWrap}>
+              <Toolbar editor={editor} />
+            </View>
           </View>
-          <Toolbar editor={editor} />
         </KeyboardAvoidingView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -643,6 +799,7 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.background,
   },
   backBtn: { flexDirection: "row", alignItems: "center", gap: 2, minWidth: 80 },
   backLabel: { fontSize: 16, color: COLORS.accent },
@@ -735,17 +892,18 @@ const s = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: COLORS.surface,
     borderRadius: 12,
-    padding: 12,
+    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.accent + "40",
+    gap: 6,
   },
   extractedTitle: {
     fontSize: 12,
     color: COLORS.accent,
     fontWeight: "700",
-    marginBottom: 8,
+    marginBottom: 2,
   },
-  extractedRow: { fontSize: 13, color: COLORS.text, marginBottom: 4 },
+  extractedRow: { fontSize: 13, color: COLORS.text, lineHeight: 19 },
   audioChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -771,6 +929,11 @@ const s = StyleSheet.create({
   hairline: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: COLORS.border,
+  },
+  editorWrap: {
+    flex: 1,
+    paddingHorizontal: 8,
+    backgroundColor: COLORS.background,
   },
   richText: { flex: 1, backgroundColor: COLORS.background },
   attachBar: {
@@ -805,8 +968,8 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.danger,
     marginLeft: 2,
   },
-  toolbar: {
-    backgroundColor: COLORS.background,
+  toolbarWrap: {
+    backgroundColor: COLORS.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
   },

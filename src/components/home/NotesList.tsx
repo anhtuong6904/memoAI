@@ -3,6 +3,7 @@ import { FlatList, ListRenderItem, RefreshControl, StyleSheet, View } from "reac
 import NoteCard from "../NoteCard";
 import { COLORS } from "@/src/constants/colors";
 import EmptyState from "../EmptyState";
+import React from "react";
 
 export default function NotesList({
   data,

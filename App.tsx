@@ -9,7 +9,7 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import ChatScreen from "./src/screens/ChatScreen";
-import EditScreen from "./src/screens/EditScreen";
+import EditScreen from "./src/screens/DetailEditScreen";
 import HomeScreen from "./src/screens/HomeScreen";
 import RemindersScreen from "./src/screens/RemindersScreen";
 import SearchScreen from "./src/screens/SearchScreen";

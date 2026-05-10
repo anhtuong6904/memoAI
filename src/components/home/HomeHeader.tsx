@@ -2,6 +2,7 @@ import { COLORS } from "@/src/constants/colors";
 import { HomeHeaderProps, RootStackParamList } from "@/src/types";
 import { Ionicons } from "@expo/vector-icons";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "HomeList">;

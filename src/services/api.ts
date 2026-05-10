@@ -7,16 +7,20 @@ const api = axios.create({
   timeout: 60000,
   headers: { "Content-Type": "application/json" },
 });
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     const msg = err.response?.data?.detail || err.message || "Unknown error";
-    console.error(`[API] ${err.config?.url}:`, msg);
+    console.error(
+      `[API] ${err.config?.method?.toUpperCase()} ${err.config?.url}:`,
+      msg,
+    );
     return Promise.reject(new Error(msg));
   },
 );
 
-// ─── NOTES ────────────────────────────────────────────────────────────────
+// ─── NOTES — KHÔNG có trailing slash ──────────────────────────────────────
 export const getAllNotes = (opts?: {
   tag?: string;
   type?: string;
@@ -28,7 +32,10 @@ export const getAllNotes = (opts?: {
   if (opts?.type) p.set("type", opts.type);
   if (opts?.limit) p.set("limit", String(opts.limit));
   if (opts?.offset) p.set("offset", String(opts.offset));
-  return api.get(`/notes?${p}`).then((r) => r.data.data as Note[]);
+  const qs = p.toString();
+  return api
+    .get(qs ? `/notes?${qs}` : "/notes")
+    .then((r) => r.data.data as Note[]);
 };
 
 export const getNoteByID = (
@@ -41,9 +48,7 @@ export const getNoteByID = (
   }));
 
 export const createNote = (content: string, title?: string): Promise<Note> =>
-  api
-    .post("/notes", { content, title, type: "text" })
-    .then((r) => r.data.data as Note);
+  api.post("/notes", { content, title }).then((r) => r.data.data as Note);
 
 export const updateNote = (
   id: number,
@@ -88,6 +93,7 @@ export const uploadAttachment = async (
     type: mimeType ?? "application/octet-stream",
   } as any);
   form.append("file_name", fileName);
+
   const res = await fetch(`${SERVER_URL}/notes/${noteId}/attachments`, {
     method: "POST",
     body: form,
@@ -112,7 +118,7 @@ export const deleteAttachment = (
 ): Promise<void> =>
   api.delete(`/notes/${noteId}/attachments/${attId}`).then(() => undefined);
 
-// ─── ANALYZE (AI) ──────────────────────────────────────────────────────────
+// ─── ANALYZE ──────────────────────────────────────────────────────────────
 export const analyzeNote = (noteId: number): Promise<{ extracted: any }> =>
   api.post(`/notes/${noteId}/analyze`).then((r) => r.data);
 
@@ -128,7 +134,7 @@ export const chatWithAI = (
     .post("/chat", { question, history })
     .then((r) => ({ answer: r.data.answer, question: r.data.question }));
 
-// ─── REMINDERS ────────────────────────────────────────────────────────────
+// ─── REMINDERS — KHÔNG có trailing slash ──────────────────────────────────
 export const getAllReminders = (): Promise<Reminder[]> =>
   api.get("/reminders").then((r) => r.data.data as Reminder[]);
 
