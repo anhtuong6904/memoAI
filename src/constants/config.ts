@@ -1,7 +1,5 @@
-// constants/config.ts
-//
-// Cách lấy IP: ipconfig (Windows) → IPv4 Address
-// Backend Python chạy port 8000
+// Cấu hình IP: sao chép .env.example thành .env rồi đặt EXPO_PUBLIC_API_URL=http://<IP_MAY>:8000
+// Điện thoại và máy backend phải cùng mạng WiFi. Chạy `ipconfig` để lấy IP.
 
-export const SERVER_URL = "http://192.168.1.24:8000"; // ← đổi IP máy tính ở đây
-export const API_URL = SERVER_URL; // Python backend không có prefix /api
+export const SERVER_URL = process.env.EXPO_PUBLIC_API_URL;
+export const API_URL = SERVER_URL;

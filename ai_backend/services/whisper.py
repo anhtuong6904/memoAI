@@ -1,72 +1,74 @@
+import concurrent.futures
+import logging
 import os
 import tempfile
+import threading
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_TRANSCRIBE_TIMEOUT = 120  # giây — trả về chuỗi rỗng nếu model treo quá lâu
 
 
 def transcribe_audio(audio_bytes: bytes, filename: str = "audio.m4a") -> str:
-    """
-    Chuyển audio bytes thành text tiếng Việt.
-    
-    Args:
-        audio_bytes: raw bytes của file audio
-        filename:    tên file gốc (để biết extension)
-    
-    Returns:
-        Transcript text tiếng Việt
-    """
-    from faster_whisper import WhisperModel
-
-    # Load model — chỉ load 1 lần nhờ module-level caching
+    """Chuyển audio bytes thành text tiếng Việt. Timeout sau 120 giây."""
     model = _get_whisper_model()
 
-    # Lưu audio ra file tạm để Whisper đọc
     suffix = Path(filename).suffix or ".m4a"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(audio_bytes)
         tmp_path = tmp.name
 
     try:
-        segments, info = model.transcribe(
-            tmp_path,
-            language="vi",          # Tiếng Việt
-            beam_size=5,            # Accuracy vs speed tradeoff
-            vad_filter=True,        # Lọc khoảng lặng — tăng accuracy
-        )
-        transcript = " ".join([s.text.strip() for s in segments])
-        return transcript.strip()
-
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_do_transcribe, model, tmp_path)
+            try:
+                return future.result(timeout=_TRANSCRIBE_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                logger.warning("Whisper transcription timed out after %ds", _TRANSCRIBE_TIMEOUT)
+                return ""
     finally:
-        os.unlink(tmp_path)  # Xóa file tạm
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
-# ── Model caching — chỉ load 1 lần ──────────────────────────────────────────
-_whisper_model = None
+def _do_transcribe(model, tmp_path: str) -> str:
+    segments, _ = model.transcribe(
+        tmp_path,
+        language="vi",
+        beam_size=5,
+        vad_filter=True,
+    )
+    return " ".join(s.text.strip() for s in segments).strip()
+
+
+# ── Model caching — thread-safe lazy load ─────────────────────────────────────
+_whisper_model      = None
+_whisper_model_lock = threading.Lock()
+
 
 def _get_whisper_model():
-    """
-    Lazy load Whisper model.
-    Lần đầu gọi: load model (~vài giây).
-    Các lần sau: trả về model đã load.
-    """
+    """Lazy load Whisper model. Thread-safe — chỉ load 1 lần dù nhiều request đến đồng thời."""
     global _whisper_model
     if _whisper_model is None:
-        try:
-            # Thử dùng GPU trước
-            from faster_whisper import WhisperModel
-            _whisper_model = WhisperModel(
-                "large-v3",         # Model lớn nhất, accurate nhất
-                device="cuda",      # RTX 4060 của bạn
-                compute_type="float16",  # Tối ưu cho GPU
-            )
-            print("✅ Whisper loaded on GPU (CUDA)")
-        except Exception as e:
-            # Fallback sang CPU nếu GPU lỗi
-            from faster_whisper import WhisperModel
-            _whisper_model = WhisperModel(
-                "medium",           # Model nhỏ hơn cho CPU
-                device="cpu",
-                compute_type="int8",
-            )
-            print(f"⚠️  Whisper loaded on CPU (GPU error: {e})")
-
+        with _whisper_model_lock:
+            if _whisper_model is None:   # double-checked locking
+                try:
+                    from faster_whisper import WhisperModel
+                    _whisper_model = WhisperModel(
+                        "large-v3",
+                        device="cuda",
+                        compute_type="float16",
+                    )
+                    logger.info("Whisper loaded on GPU (CUDA)")
+                except Exception as e:
+                    from faster_whisper import WhisperModel
+                    _whisper_model = WhisperModel(
+                        "medium",
+                        device="cpu",
+                        compute_type="int8",
+                    )
+                    logger.warning("Whisper loaded on CPU (GPU error: %s)", e)
     return _whisper_model

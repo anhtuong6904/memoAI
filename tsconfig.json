@@ -8,5 +8,5 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["../src/editor-web"]
+  "exclude": ["./editor-web"]
 }

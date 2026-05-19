@@ -1,20 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS } from "../constants/colors";
-import { chatWithAI } from "../services/api";
+import { chatWithAI, clearChatHistory, getChatHistory } from "../services/api";
 import { ChatMessage } from "../types";
+
+type KeyedMsg = ChatMessage & { _key: string };
+let _keySeq = 0;
+const keyed = (msg: ChatMessage): KeyedMsg => ({ ...msg, _key: `m${++_keySeq}` });
 
 function Bubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
@@ -33,51 +38,79 @@ function Bubble({ msg }: { msg: ChatMessage }) {
 }
 
 const SUGGESTIONS = [
-  "Tom tat ghi chu tuan nay",
-  "Toi co cuoc hop nao sap toi?",
-  "Liet ke viec can lam",
+  "Tóm tắt ghi chú tuần này",
+  "Tôi có cuộc họp nào sắp tới?",
+  "Liệt kê việc cần làm",
 ];
 
 export default function ChatScreen() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<KeyedMsg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const listRef = useRef<FlatList>(null);
 
-  const send = async () => {
+  // Load persistent history on mount
+  useEffect(() => {
+    getChatHistory()
+      .then((data) => setMessages(data.map(keyed)))
+      .catch((e) => console.warn("[ChatScreen] getChatHistory error:", e))
+      .finally(() => setHistoryLoading(false));
+  }, []);
+
+  const send = useCallback(async () => {
     const text = input.trim();
     if (!text || loading) return;
-    const userMsg: ChatMessage = { role: "user", content: text };
-    const next = [...messages, userMsg];
-    setMessages(next);
+
+    const userMsg = keyed({ role: "user", content: text });
+    setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setLoading(true);
+
     try {
-      const { answer } = await chatWithAI(text, messages);
-      setMessages([...next, { role: "assistant", content: answer }]);
+      const { answer } = await chatWithAI(text);
+      setMessages((prev) => [...prev, keyed({ role: "assistant", content: answer })]);
     } catch {
-      setMessages([
-        ...next,
-        { role: "assistant", content: "Loi ket noi. Kiem tra backend." },
+      setMessages((prev) => [
+        ...prev,
+        keyed({ role: "assistant", content: "Lỗi kết nối. Kiểm tra backend." }),
       ]);
     } finally {
       setLoading(false);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     }
-  };
+  }, [input, loading]);
+
+  const handleClear = useCallback(() => {
+    Alert.alert("Xóa lịch sử", "Xóa toàn bộ lịch sử hội thoại?", [
+      { text: "Hủy", style: "cancel" },
+      {
+        text: "Xóa",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await clearChatHistory();
+            setMessages([]);
+          } catch {
+            Alert.alert("Lỗi", "Không xóa được lịch sử.");
+          }
+        },
+      },
+    ]);
+  }, []);
 
   return (
-    <SafeAreaView style={s.container} edges={["top", "bottom"]}>
+    <SafeAreaView style={s.container} edges={["top"]}>
       <View style={s.header}>
         <View style={s.headerIcon}>
           <Ionicons name="sparkles" size={18} color={COLORS.accent} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={s.headerTitle}>Chat AI</Text>
-          <Text style={s.headerSub}>Hoi ve ghi chu cua ban</Text>
+          <Text style={s.headerSub}>Hỏi về ghi chú của bạn</Text>
         </View>
         {messages.length > 0 && (
-          <TouchableOpacity style={s.clearBtn} onPress={() => setMessages([])}>
+          <TouchableOpacity style={s.clearBtn} onPress={handleClear}>
             <Ionicons name="trash-outline" size={18} color={COLORS.textDim} />
           </TouchableOpacity>
         )}
@@ -87,13 +120,15 @@ export default function ChatScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        {messages.length === 0 ? (
+        {historyLoading ? (
+          <View style={s.empty}>
+            <ActivityIndicator size="large" color={COLORS.accent} />
+          </View>
+        ) : messages.length === 0 ? (
           <View style={s.empty}>
             <Text style={{ fontSize: 48, marginBottom: 16 }}>💬</Text>
             <Text style={s.emptyTitle}>Second Brain</Text>
-            <Text style={s.emptySub}>
-              Hoi bat cu dieu gi ve ghi chu cua ban
-            </Text>
+            <Text style={s.emptySub}>Hỏi bất cứ điều gì về ghi chú của bạn</Text>
             <View style={{ width: "100%", gap: 8, marginTop: 16 }}>
               {SUGGESTIONS.map((sg) => (
                 <TouchableOpacity
@@ -110,7 +145,7 @@ export default function ChatScreen() {
           <FlatList
             ref={listRef}
             data={messages}
-            keyExtractor={(_, i) => String(i)}
+            keyExtractor={(item) => item._key}
             contentContainerStyle={s.list}
             showsVerticalScrollIndicator={false}
             onContentSizeChange={() =>
@@ -123,7 +158,7 @@ export default function ChatScreen() {
         {loading && (
           <View style={s.thinking}>
             <ActivityIndicator size="small" color={COLORS.accent} />
-            <Text style={s.thinkingTx}>Dang suy nghi...</Text>
+            <Text style={s.thinkingTx}>Đang suy nghĩ...</Text>
           </View>
         )}
 
@@ -132,13 +167,12 @@ export default function ChatScreen() {
             style={s.input}
             value={input}
             onChangeText={setInput}
-            placeholder="Hoi ve ghi chu cua ban..."
+            placeholder="Hỏi về ghi chú của bạn..."
             placeholderTextColor={COLORS.textDim}
             multiline
             maxLength={500}
             returnKeyType="send"
             onSubmitEditing={send}
-            blurOnSubmit={false}
           />
           <TouchableOpacity
             style={[s.sendBtn, (!input.trim() || loading) && s.sendDim]}

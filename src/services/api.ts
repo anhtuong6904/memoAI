@@ -4,9 +4,12 @@ import { FileAttachment, Note, Reminder } from "../types";
 
 const api = axios.create({
   baseURL: SERVER_URL,
-  timeout: 60000,
+  timeout: 30000,
   headers: { "Content-Type": "application/json" },
 });
+
+// LLM calls take 1-3 min on local hardware
+const AI_TIMEOUT = 300_000;
 
 api.interceptors.response.use(
   (res) => res,
@@ -38,12 +41,46 @@ export const getAllNotes = (opts?: {
     .then((r) => r.data.data as Note[]);
 };
 
+export interface ExtractedInfoRaw {
+  id: number;
+  note_id: number;
+  person_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  organization?: string | null;
+  place_name?: string | null;
+  address?: string | null;
+  location_lat?: number | null;
+  location_lng?: number | null;
+  event_title?: string | null;
+  event_time?: string | null;
+  deadline?: string | null;
+  category?: string | null;
+  action_items?: string | null;
+  reminder_needed: number;
+  raw_json?: string | null;
+  created_at: string;
+}
+
+export interface AttachmentRaw {
+  id: number;
+  note_id: number;
+  file_name: string;
+  file_path: string;
+  file_url: string;
+  mime_type?: string | null;
+  file_group: string;
+  file_size?: number | null;
+  extracted_text?: string | null;
+  created_at: string;
+}
+
 export const getNoteByID = (
   id: number,
-): Promise<{ data: Note; extracted: any; attachments: any[] }> =>
+): Promise<{ data: Note; extracted: ExtractedInfoRaw | null; attachments: AttachmentRaw[] }> =>
   api.get(`/notes/${id}`).then((r) => ({
     data: r.data.data,
-    extracted: r.data.extracted,
+    extracted: r.data.extracted ?? null,
     attachments: r.data.attachments ?? [],
   }));
 
@@ -60,8 +97,6 @@ export const updateNote = (
       | "content_json"
       | "summary"
       | "tags"
-      | "is_pinned"
-      | "is_archived"
     >
   >,
 ): Promise<Note> =>
@@ -69,12 +104,6 @@ export const updateNote = (
 
 export const deleteNote = (id: number): Promise<void> =>
   api.delete(`/notes/${id}`).then(() => undefined);
-
-export const togglePin = (note: Note): Promise<Note> =>
-  api.put(`/notes/${note.id}/pin`).then((r) => r.data.data as Note);
-
-export const toggleArchive = (note: Note): Promise<Note> =>
-  api.put(`/notes/${note.id}/archive`).then((r) => r.data.data as Note);
 
 // ─── ATTACHMENTS ──────────────────────────────────────────────────────────
 export const getAttachments = (noteId: number): Promise<any[]> =>
@@ -118,9 +147,30 @@ export const deleteAttachment = (
 ): Promise<void> =>
   api.delete(`/notes/${noteId}/attachments/${attId}`).then(() => undefined);
 
-// ─── ANALYZE ──────────────────────────────────────────────────────────────
-export const analyzeNote = (noteId: number): Promise<{ extracted: any }> =>
-  api.post(`/notes/${noteId}/analyze`).then((r) => r.data);
+// ─── ANALYZE ─────────────────────────────────────────────────────────────
+export const analyzeNote = (
+  id: number,
+): Promise<{ success: boolean; extracted: Record<string, unknown>; reminder?: Reminder | null }> =>
+  api.post(`/notes/${id}/analyze`, {}, { timeout: AI_TIMEOUT }).then((r) => r.data);
+
+// ─── REMINDERS (create) ───────────────────────────────────────────────────
+export const createReminder = (data: {
+  title: string;
+  remind_at: string;
+  note_id?: number;
+  body?: string;
+}): Promise<Reminder> =>
+  api.post("/reminders", data).then((r) => r.data.data as Reminder);
+
+// ─── NOTE RAG CHAT ────────────────────────────────────────────────────────
+export const chatWithNote = (
+  noteId: number,
+  message: string,
+  history: { role: "user" | "assistant"; content: string }[] = [],
+): Promise<{ answer: string }> =>
+  api
+    .post(`/notes/${noteId}/chat`, { message, history }, { timeout: AI_TIMEOUT })
+    .then((r) => ({ answer: r.data.answer as string }));
 
 // ─── AI SEARCH & CHAT ─────────────────────────────────────────────────────
 export const searchNotes = (keyword: string): Promise<Note[]> =>
@@ -128,11 +178,21 @@ export const searchNotes = (keyword: string): Promise<Note[]> =>
 
 export const chatWithAI = (
   question: string,
-  history: { role: "user" | "assistant"; content: string }[] = [],
 ): Promise<{ answer: string; question: string }> =>
   api
-    .post("/chat", { question, history })
+    .post("/chat", { question }, { timeout: AI_TIMEOUT })
     .then((r) => ({ answer: r.data.answer, question: r.data.question }));
+
+// ─── CHAT HISTORY ─────────────────────────────────────────────────────────
+export const getChatHistory = (
+  limit = 50,
+): Promise<{ role: "user" | "assistant"; content: string }[]> =>
+  api
+    .get(`/chat/history?limit=${limit}`)
+    .then((r) => r.data.data as { role: "user" | "assistant"; content: string }[]);
+
+export const clearChatHistory = (): Promise<void> =>
+  api.delete("/chat/history").then(() => undefined);
 
 // ─── REMINDERS — KHÔNG có trailing slash ──────────────────────────────────
 export const getAllReminders = (): Promise<Reminder[]> =>
@@ -140,3 +200,6 @@ export const getAllReminders = (): Promise<Reminder[]> =>
 
 export const markReminderDone = (id: number): Promise<void> =>
   api.put(`/reminders/${id}/done`).then(() => undefined);
+
+export const deleteReminder = (id: number): Promise<void> =>
+  api.delete(`/reminders/${id}`).then(() => undefined);

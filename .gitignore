@@ -10,6 +10,7 @@ web-build/
 
 # Env
 .env
+src/.env
 ai_backend/.env
 
 # Uploads & Database
@@ -18,6 +19,7 @@ ai_backend/routes/_pycache_
 ai_backend/uploads/*
 !ai_backend/uploads/.gitkeep
 ai_backend/*.db
+ai_backend/faiss_index/
 
 # OS
 .DS_Store
@@ -32,3 +34,6 @@ npm-debug.log*
 
 expo-env.d.ts
 # @end expo-cli
+
+android/
+.claude/

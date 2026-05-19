@@ -1,7 +1,8 @@
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   ListRenderItem,
   StyleSheet,
@@ -26,49 +27,29 @@ export default function HomeScreen() {
   const { notes, loading, error, reload, removeNote } = useNotes();
   const [search, setSearch] = useState("");
 
-  // Lọc local theo từ khoá tìm kiếm
-  const filtered = notes.filter(
-    (n) =>
-      n.content.toLowerCase().includes(search.toLowerCase()) ||
-      (n.summary ?? "").toLowerCase().includes(search.toLowerCase()),
-  );
+  // Reload danh sách mỗi khi quay lại HomeScreen (sau khi edit/tạo note)
+  useFocusEffect(useCallback(() => { reload(); }, [reload]));
+
+  const q = search.toLowerCase();
+  const filtered = search
+    ? notes.filter(
+        (n) =>
+          (n.title ?? "").toLowerCase().includes(q) ||
+          n.content.toLowerCase().includes(q) ||
+          (n.summary ?? "").toLowerCase().includes(q),
+      )
+    : notes;
 
   const renderItem: ListRenderItem<Note> = ({ item }) => (
     <NoteCard
       note={item}
-      onPress={() => navigation.navigate("Edit", { noteId: item.id })}
+      onPress={() => navigation.navigate("Edit", { noteId: item.id, initialNote: item })}
       onDelete={() => removeNote(item.id)}
-      onHold={() => console.log("Hold:", item.id)}
     />
   );
 
-  /* ─── Trạng thái loading ─── */
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <Text style={styles.statusText}>Đang tải ghi chú…</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  /* ─── Trạng thái lỗi ─── */
-  if (error) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <Text style={styles.errorText}>⚠️ {error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={reload}>
-            <Text style={styles.retryText}>Thử lại</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top"]}>
       {/* Header */}
       <View style={styles.header}>
         <View>
@@ -92,7 +73,17 @@ export default function HomeScreen() {
         />
       </View>
 
-      {/* Danh sách ghi chú */}
+      {/* Error banner — không block UI */}
+      {error && !loading && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText} numberOfLines={1}>⚠️ {error}</Text>
+          <TouchableOpacity onPress={reload}>
+            <Text style={styles.retryText}>Thử lại</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Danh sách — luôn render, loading hiện trong RefreshControl */}
       <FlatList<Note>
         data={filtered}
         keyExtractor={(item) => item.id.toString()}
@@ -100,10 +91,16 @@ export default function HomeScreen() {
         onRefresh={reload}
         refreshing={loading}
         ListEmptyComponent={
-          <EmptyState
-            message={search ? "Không tìm thấy ghi chú" : "Chưa có ghi chú nào"}
-            icon="📭"
-          />
+          loading ? (
+            <View style={styles.loadingCenter}>
+              <ActivityIndicator color={COLORS.accent} size="large" />
+            </View>
+          ) : (
+            <EmptyState
+              message={search ? "Không tìm thấy ghi chú" : "Chưa có ghi chú nào"}
+              icon="📭"
+            />
+          )
         }
         contentContainerStyle={[
           styles.listContent,
@@ -119,32 +116,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
-  },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-  },
-  statusText: {
-    color: COLORS.textMuted,
-    fontSize: 15,
-  },
-  errorText: {
-    color: COLORS.danger,
-    fontSize: 15,
-    textAlign: "center",
-    paddingHorizontal: 24,
-  },
-  retryBtn: {
-    backgroundColor: COLORS.accent,
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  retryText: {
-    color: "#fff",
-    fontWeight: "600",
   },
   header: {
     flexDirection: "row",
@@ -181,9 +152,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: `${COLORS.danger}22`,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 12,
+  },
+  errorText: {
+    color: COLORS.danger,
+    fontSize: 13,
+    flex: 1,
+  },
+  retryText: {
+    color: COLORS.accent,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  loadingCenter: {
+    paddingTop: 80,
+    alignItems: "center",
+  },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 32,
   },
   listEmpty: {
     flex: 1,

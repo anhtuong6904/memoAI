@@ -13,13 +13,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  analyzeNote as analyzeNoteApi,
   createNote as createNoteApi,
   deleteNote as deleteNoteApi,
   getAllNotes,
   getNoteByID,
-  toggleArchive as toggleArchiveApi,
-  togglePin as togglePinApi,
   updateNote as updateNoteApi,
 } from "../services/api";
 import { FileAttachment, Note } from "../types";
@@ -74,9 +71,6 @@ interface UseNotesReturn {
   removeNote: (id: number) => Promise<void>;
   createNote: (content: string, title?: string) => Promise<Note>;
   updateNote: (id: number, data: Partial<Note>) => Promise<Note>;
-  analyzeNote: (id: number) => Promise<void>;
-  pinNote: (note: Note) => Promise<void>;
-  archiveNote: (note: Note) => Promise<void>;
 }
 
 interface UseNoteDetailReturn {
@@ -131,16 +125,20 @@ export function useNotes(): UseNotesReturn {
   // ── Xoa note ────────────────────────────────────────────────────────────
   const removeNote = useCallback(
     async (id: number) => {
-      // Optimistic update
-      setNotes((prev) => prev.filter((n) => n.id !== id));
+      // Optimistic update — lưu state cũ để restore nếu API fail
+      let prevNotes: Note[] = [];
+      setNotes((prev) => {
+        prevNotes = prev;
+        return prev.filter((n) => n.id !== id);
+      });
       try {
         await deleteNoteApi(id);
       } catch {
-        // Server fail -> fetch lai de dong bo
-        await reload();
+        // Restore state cũ thay vì reload toàn bộ list
+        setNotes(prevNotes);
       }
     },
-    [reload],
+    [],
   );
 
   // ── Tao note moi ─────────────────────────────────────────────────────────
@@ -163,50 +161,6 @@ export function useNotes(): UseNotesReturn {
     [],
   );
 
-  // ── Chay AI analyze pipeline ─────────────────────────────────────────────
-  const analyzeNote = useCallback(
-    async (id: number): Promise<void> => {
-      await analyzeNoteApi(id);
-      // Sau khi analyze: reload de lay tags moi, summary moi
-      await reload();
-    },
-    [reload],
-  );
-
-  // ── Toggle pin ──────────────────────────────────────────────────────────
-  const pinNote = useCallback(
-    async (note: Note): Promise<void> => {
-      // Optimistic update
-      setNotes((prev) =>
-        prev.map((n) =>
-          n.id === note.id
-            ? { ...n, is_pinned: note.is_pinned === 1 ? 0 : 1 }
-            : n,
-        ),
-      );
-      try {
-        await togglePinApi(note);
-      } catch {
-        await reload();
-      }
-    },
-    [reload],
-  );
-
-  // ── Toggle archive ──────────────────────────────────────────────────────
-  const archiveNote = useCallback(
-    async (note: Note): Promise<void> => {
-      // Optimistic — an khoi danh sach ngay
-      setNotes((prev) => prev.filter((n) => n.id !== note.id));
-      try {
-        await toggleArchiveApi(note);
-      } catch {
-        await reload();
-      }
-    },
-    [reload],
-  );
-
   return {
     notes,
     loading,
@@ -217,9 +171,6 @@ export function useNotes(): UseNotesReturn {
     removeNote,
     createNote,
     updateNote,
-    analyzeNote,
-    pinNote,
-    archiveNote,
   };
 }
 
@@ -228,11 +179,19 @@ export function useNotes(): UseNotesReturn {
 // Load 1 note theo ID, kem extracted_info
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function useNoteDetail(noteId: number | undefined): UseNoteDetailReturn {
-  const [note, setNote] = useState<Note | null>(null);
+export function useNoteDetail(
+  noteId: number | undefined,
+  initialNote?: Note,
+): UseNoteDetailReturn {
+  // initialNote từ HomeScreen — cho phép editor load content ngay lập tức
+  // trước khi API round-trip hoàn tất
+  const [note, setNote] = useState<Note | null>(initialNote ?? null);
   const [extracted, setExtracted] = useState<ExtractedInfo | null>(null);
   const [attachment, setAttachment] = useState<FileAttachment[]>([]);
-  const [loading, setLoading] = useState<boolean>(noteId !== undefined);
+  // Nếu có initialNote, không cần block UI — fetch extracted/attachments ngầm
+  const [loading, setLoading] = useState<boolean>(
+    noteId !== undefined && !initialNote,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {

@@ -1,5 +1,8 @@
+import logging
 import sqlite3
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
 DB_PATH  = BASE_DIR / "memoai.db"
@@ -16,21 +19,23 @@ def get_connection() -> sqlite3.Connection:
 def init_db() -> None:
     conn = get_connection()
 
-    # ── Migration: drop cac bang cu tu schema BlockEditor truoc day ─────
-    # PRAGMA foreign_keys=OFF de tranh FK mismatch khi DROP
+    # Migration: drop bảng cũ từ schema BlockEditor
+    # Dùng whitelist cứng — không nhận input từ bên ngoài nên an toàn
+    _DROP_WHITELIST = frozenset(["block", "blocks", "captures", "ai_extractions"])
     conn.execute("PRAGMA foreign_keys = OFF")
-    for old_table in ["block", "blocks", "captures", "ai_extractions"]:
+    for old_table in _DROP_WHITELIST:
         try:
             existing = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type=\'table\' AND name=?",
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
                 [old_table],
             ).fetchone()
             if existing:
-                conn.execute(f"DROP TABLE IF EXISTS {old_table}")
+                # Table name validated against whitelist — safe to interpolate
+                conn.execute(f"DROP TABLE IF EXISTS {old_table}")  # noqa: S608
                 conn.commit()
-                print(f"  migration: dropped old table {old_table!r}")
+                logger.info("migration: dropped old table %r", old_table)
         except Exception as e:
-            print(f"  migration: drop {old_table} error: {e}")
+            logger.warning("migration: drop %r error: %s", old_table, e)
     conn.execute("PRAGMA foreign_keys = ON")
 
     conn.executescript("""
@@ -49,6 +54,7 @@ def init_db() -> None:
         is_pinned     INTEGER NOT NULL DEFAULT 0,
         is_archived   INTEGER NOT NULL DEFAULT 0,
         ai_processed  INTEGER NOT NULL DEFAULT 0,
+        embedded_at   TEXT,
         created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
         updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
@@ -105,29 +111,56 @@ def init_db() -> None:
     CREATE INDEX IF NOT EXISTS idx_notes_type       ON notes(type,is_archived);
     CREATE INDEX IF NOT EXISTS idx_notes_ai         ON notes(ai_processed);
     CREATE INDEX IF NOT EXISTS idx_note_tags_note   ON note_tags(note_id);
+    CREATE INDEX IF NOT EXISTS idx_note_tags_tag    ON note_tags(tag_id);
     CREATE INDEX IF NOT EXISTS idx_reminders_time   ON reminders(remind_at,is_done);
     CREATE INDEX IF NOT EXISTS idx_extracted_note   ON extracted_info(note_id);
     CREATE INDEX IF NOT EXISTS idx_extracted_cat    ON extracted_info(category);
     CREATE INDEX IF NOT EXISTS idx_attachments_note ON note_attachments(note_id);
+    CREATE TABLE IF NOT EXISTS chat_messages (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        role       TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+        content    TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_time ON chat_messages(created_at);
     """)
     conn.commit()
 
-    for tbl, col, sql in [
-        ("notes","content_json","ALTER TABLE notes ADD COLUMN content_json TEXT"),
-        ("notes","file_url",    "ALTER TABLE notes ADD COLUMN file_url TEXT"),
-        ("notes","source_url",  "ALTER TABLE notes ADD COLUMN source_url TEXT"),
-    ]:
-        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
-        if col not in cols:
-            conn.execute(sql); conn.commit()
+    # Migrations cho DB cũ (thêm cột nếu chưa có)
+    _add_col_if_missing(conn, "notes", "content_json", "ALTER TABLE notes ADD COLUMN content_json TEXT")
+    _add_col_if_missing(conn, "notes", "file_url",     "ALTER TABLE notes ADD COLUMN file_url TEXT")
+    _add_col_if_missing(conn, "notes", "source_url",   "ALTER TABLE notes ADD COLUMN source_url TEXT")
+    # Fix #5: cột embedded_at cho incremental indexing
+    _add_col_if_missing(conn, "notes", "embedded_at",  "ALTER TABLE notes ADD COLUMN embedded_at TEXT")
+    # Index cho embedded_at — tạo SAU khi đảm bảo cột đã tồn tại
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_embedded ON notes(embedded_at, updated_at)")
+    conn.commit()
 
     att_cols = [r[1] for r in conn.execute("PRAGMA table_info(note_attachments)").fetchall()]
     if att_cols and "file_group" not in att_cols:
         conn.execute("ALTER TABLE note_attachments ADD COLUMN file_group TEXT NOT NULL DEFAULT 'document'")
         conn.commit()
+    if att_cols and "extracted_text" not in att_cols:
+        conn.execute("ALTER TABLE note_attachments ADD COLUMN extracted_text TEXT")
+        conn.commit()
 
     conn.close()
-    print(f"DB ready: {DB_PATH}")
+    logger.info("DB ready: %s", DB_PATH)
+
+
+_TABLE_WHITELIST = frozenset(["notes", "note_attachments", "extracted_info", "reminders",
+                              "tags", "note_tags", "chat_messages"])
+
+
+def _add_col_if_missing(conn, table: str, col: str, sql: str) -> None:
+    if table not in _TABLE_WHITELIST:
+        logger.error("_add_col_if_missing: unknown table %r — skipping", table)
+        return
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]  # noqa: S608
+    if col not in cols:
+        conn.execute(sql)
+        conn.commit()
+        logger.info("migration: added column %s.%s", table, col)
 
 
 if __name__ == "__main__":

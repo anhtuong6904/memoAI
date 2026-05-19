@@ -3,6 +3,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   StyleSheet,
   Text,
@@ -32,18 +33,19 @@ export default function SearchScreen() {
     try {
       const data = await searchNotes(query);
       setResults(data);
-    } catch {
+    } catch (e) {
       setResults([]);
+      Alert.alert("Lỗi", e instanceof Error ? e.message : "Tìm kiếm thất bại.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={s.container} edges={["top"]}>
       <View style={s.header}>
-        <Text style={s.title}>Tim kiem</Text>
-        <Text style={s.sub}>Tim kiem thong minh qua AI</Text>
+        <Text style={s.title}>Tìm kiếm</Text>
+        <Text style={s.sub}>Tìm kiếm thông minh qua AI</Text>
       </View>
       <View style={s.searchWrap}>
         <SearchBar
@@ -54,7 +56,7 @@ export default function SearchScreen() {
             setResults([]);
             setSearched(false);
           }}
-          placeholder="Vi du: so dien thoai cua anh Minh..."
+          placeholder="Ví dụ: số điện thoại của anh Minh..."
         />
       </View>
       {loading ? (
@@ -64,7 +66,7 @@ export default function SearchScreen() {
           color={COLORS.accent}
         />
       ) : searched && results.length === 0 ? (
-        <EmptyState message="Khong tim thay ket qua" icon="🔍" />
+        <EmptyState message="Không tìm thấy kết quả" icon="🔍" />
       ) : (
         <FlatList
           data={results}
@@ -79,7 +81,7 @@ export default function SearchScreen() {
           ListHeaderComponent={
             results.length > 0 ? (
               <Text style={s.resultCount}>
-                {results.length} ket qua cho "{query}"
+                {results.length} kết quả cho "{query}"
               </Text>
             ) : null
           }

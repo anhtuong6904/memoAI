@@ -3,11 +3,13 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import React from "react";
+import React, { useEffect } from "react";
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { requestNotificationPermissions } from "./src/services/notifications";
 import ChatScreen from "./src/screens/ChatScreen";
 import EditScreen from "./src/screens/DetailEditScreen";
 import HomeScreen from "./src/screens/HomeScreen";
@@ -29,6 +31,11 @@ function HomeStack() {
 
 function AppNavigator() {
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    requestNotificationPermissions();
+  }, []);
+
   return (
     <>
       <StatusBar style="light" />
@@ -39,8 +46,8 @@ function AppNavigator() {
             tabBarStyle: {
               backgroundColor: "#0F0F0F",
               borderTopColor: "#1F2937",
-              paddingBottom: insets.bottom + 6,
-              height: 62 + insets.bottom,
+              paddingBottom: 0,
+              height: 40 + insets.bottom,
             },
             tabBarActiveTintColor: "#6C63FF",
             tabBarInactiveTintColor: "#6B7280",
@@ -51,7 +58,7 @@ function AppNavigator() {
             name="Home"
             component={HomeStack}
             options={{
-              tabBarLabel: "Trang chu",
+              tabBarLabel: "Trang chủ",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="home-outline" size={size} color={color} />
               ),
@@ -61,7 +68,7 @@ function AppNavigator() {
             name="Search"
             component={SearchScreen}
             options={{
-              tabBarLabel: "Tim kiem",
+              tabBarLabel: "Tìm kiếm",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="search-outline" size={size} color={color} />
               ),
@@ -85,7 +92,7 @@ function AppNavigator() {
             name="Reminders"
             component={RemindersScreen}
             options={{
-              tabBarLabel: "Nhac nho",
+              tabBarLabel: "Nhắc nhở",
               tabBarIcon: ({ color, size }) => (
                 <Ionicons
                   name="notifications-outline"
@@ -101,10 +108,74 @@ function AppNavigator() {
   );
 }
 
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error?: Error }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[ErrorBoundary] Uncaught error:", error.message, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={eb.container}>
+          <Text style={eb.title}>Có lỗi xảy ra</Text>
+          <Text style={eb.message}>
+            {this.state.error?.message ?? "Lỗi không xác định"}
+          </Text>
+          <TouchableOpacity
+            style={eb.btn}
+            onPress={() => this.setState({ hasError: false })}
+          >
+            <Text style={eb.btnTx}>Thử lại</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const eb = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#0F0F0F",
+    padding: 24,
+  },
+  title: { color: "#fff", fontSize: 18, fontWeight: "700", marginBottom: 12 },
+  message: {
+    color: "#6B7280",
+    fontSize: 13,
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  btn: {
+    backgroundColor: "#6C63FF",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  btnTx: { color: "#fff", fontWeight: "600" },
+});
+
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AppNavigator />
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <AppNavigator />
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
